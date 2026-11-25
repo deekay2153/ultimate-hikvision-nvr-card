@@ -16,7 +16,9 @@ built for Hikvision.
   straight to the moment someone walked up the driveway: day stepper,
   previous / next event, ±10 s, zoom, and saving a clip.
 - **Detections list** down the side: today's people, vehicles and doorbell
-  rings across every camera; tap one to watch it.
+  rings across every camera; tap one to watch it. Swipe it away (or tap its
+  handle) for a bigger wall; swipe in from the right edge to bring it back.
+  The 24-hour bar under the live wall slides away the same way (down / up).
 - **Phones and tablets too:** portrait and landscape layouts.
 
 <!-- screenshots / GIF go here -->

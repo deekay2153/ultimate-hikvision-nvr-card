@@ -188,7 +188,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           display: block !important; overflow: hidden; touch-action: pan-y;
           transition: width .28s cubic-bezier(.2, .8, .2, 1);
         }
-        :host([wall][side-off]) .fl-side { width: 0; }
+        :host([wall][side-off]) .fl-side { width: 0; visibility: hidden; transition: width .28s cubic-bezier(.2, .8, .2, 1), visibility 0s .28s; }
         :host([wall]) .fl-side > * { width: 250px; }
         .flx-side-tab {
           position: absolute; top: 50%; right: 250px; z-index: 6; transform: translateY(-50%);
@@ -198,6 +198,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           transition: right .28s cubic-bezier(.2, .8, .2, 1), background .2s; touch-action: none;
         }
         .flx-side-tab:hover { background: rgba(32,36,47,.96); }
+        .flx-side-tab::before { content: ""; position: absolute; inset: -10px -4px -10px -18px; }
         .flx-side-tab svg { width: 14px; height: 14px; fill: currentColor; transition: transform .28s; }
         :host([wall][side-off]) .flx-side-tab { right: 0; }
         :host([wall][side-off]) .flx-side-tab svg { transform: rotate(180deg); }
@@ -205,14 +206,17 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           :host([wall]) .fl-side, .flx-side-tab, .flx-side-tab svg { transition: none; }
         }
       }
-      @media (max-width: 899px), (max-height: 500px) { .flx-side-tab { display: none; } }
+      @media (max-width: 899px), (max-height: 500px) {
+        .flx-side-tab { display: none; }
+        :host([wall][side-off]) .fl-side { display: block; }
+      }
       /* 8. The 24-hour bar slides away (wide screens, live only). */
       @media (min-width: 900px) and (min-height: 501px) {
         :host([wall]) .fl-livetl {
           touch-action: pan-x; overflow: hidden; max-height: 120px;
           transition: max-height .28s cubic-bezier(.2, .8, .2, 1), opacity .2s, margin .28s;
         }
-        :host([wall][tl-off]) .fl-livetl { max-height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; }
+        :host([wall][tl-off]) .fl-livetl { max-height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; visibility: hidden; transition: max-height .28s cubic-bezier(.2, .8, .2, 1), opacity .2s, margin .28s, visibility 0s .28s; }
         :host([wall]) { --flx-side-w: 250px; }
         :host([wall][side-off]) { --flx-side-w: 0px; }
         .flx-tl-tab {
@@ -225,6 +229,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           touch-action: none;
         }
         .flx-tl-tab:hover { background: rgba(32,36,47,.96); }
+        .flx-tl-tab::before { content: ""; position: absolute; inset: -18px -8px -4px -8px; }
         .flx-tl-tab svg { width: 14px; height: 14px; fill: currentColor; transform: rotate(90deg); transition: transform .28s; }
         :host([wall][tl-off]) .flx-tl-tab { bottom: 0; }
         :host([wall][tl-off]) .flx-tl-tab svg { transform: rotate(-90deg); }
@@ -519,6 +524,13 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     };
     // ---- 7. detections bar: swipe / handle --------------------------------------------
     const SIDE_KEY = "ultimate-nvr-side";
+    const DRAGGABLE = ".timeline, .fl-tl, .fl-deck, .fl-ptz, .fl-presets, .fast-buttons, .flx-side-tab, .flx-tl-tab";
+    const edgeOk = (host, event) => {
+      const root = host.shadowRoot;
+      if (root && root.querySelector(".stage.fl-full")) return false;
+      const path = event.composedPath ? event.composedPath() : [event.target];
+      return !path.some((node) => node instanceof Element && node.matches(DRAGGABLE));
+    };
     const wideScreen = () => !NARROW.matches && !SHORT.matches;
     const setSide = (host, open, remember = true) => {
       host._sideOff = !open;
@@ -537,10 +549,27 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       clearTimeout(host._flxSideFit);
       host._flxSideFit = setTimeout(() => fillScreen(host), 320);
     };
-    const swipe = (el, onSwipe, startOk = () => true) => {
+    const swipe = (el, onSwipe, startOk = () => true, capture = false) => {
       let start = null;
+      el.addEventListener(
+        "click",
+        (event) => {
+          if (Date.now() - (el._flxSwipedAt || 0) < 400) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        },
+        true
+      );
       el.addEventListener("pointerdown", (event) => {
         start = event.isPrimary && startOk(event) ? { x: event.clientX, y: event.clientY, t: Date.now() } : null;
+        if (start && capture && el.setPointerCapture) {
+          try {
+            el.setPointerCapture(event.pointerId);
+          } catch (_) {
+            /* the pointer is already gone */
+          }
+        }
       });
       el.addEventListener("pointerup", (event) => {
         if (!start) return;
@@ -548,8 +577,14 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         const dy = event.clientY - start.y;
         const quick = Date.now() - start.t < 700;
         start = null;
-        if (quick && Math.abs(dx) > 50 && Math.abs(dy) < 40) onSwipe(dx > 0 ? "right" : "left", event);
-        else if (quick && Math.abs(dy) > 40 && Math.abs(dx) < 50) onSwipe(dy > 0 ? "down" : "up", event);
+
+        let direction = null;
+        if (quick && Math.abs(dx) > 50 && Math.abs(dy) < 40) direction = dx > 0 ? "right" : "left";
+        else if (quick && Math.abs(dy) > 40 && Math.abs(dx) < 50) direction = dy > 0 ? "down" : "up";
+        if (direction) {
+          el._flxSwipedAt = Date.now();
+          onSwipe(direction, event);
+        }
       });
       el.addEventListener("pointercancel", () => {
         start = null;
@@ -568,11 +603,9 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         } catch (_) {
           /* private window */
         }
-        if (saved === "closed") {
-          host._sideOff = true;
-          host.toggleAttribute("side-off", true);
-        }
+        if (saved === "closed") host._sideOff = true;
       }
+      host.toggleAttribute("side-off", !!host._sideOff && wideScreen());
       if (!card.querySelector(":scope > .flx-side-tab")) {
         const tab = document.createElement("button");
         tab.type = "button";
@@ -584,7 +617,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           setSide(host, !!host._sideOff);
         });
         // Drag the handle itself: left opens, right closes.
-        swipe(tab, (direction) => setSide(host, direction === "left"));
+        swipe(tab, (direction) => setSide(host, direction === "left"), undefined, true);
         card.appendChild(tab);
       }
       if (!side._flxSwipe) {
@@ -602,7 +635,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           (direction) => {
             if (wideScreen() && direction === "left" && host._sideOff) setSide(host, true);
           },
-          (event) => host._sideOff && card.getBoundingClientRect().right - event.clientX < 40
+          (event) => host._sideOff && card.getBoundingClientRect().right - event.clientX < 40 && edgeOk(host, event)
         );
       }
     };
@@ -637,11 +670,9 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         } catch (_) {
           /* private window */
         }
-        if (saved === "closed") {
-          host._tlOff = true;
-          host.toggleAttribute("tl-off", true);
-        }
+        if (saved === "closed") host._tlOff = true;
       }
+      host.toggleAttribute("tl-off", !!host._tlOff && wideScreen());
       const bar = root.querySelector(".fl-main > .fl-livetl");
       // The handle only shows while there is a live 24-hour bar to hide.
       host.toggleAttribute("tl-live", !!bar);
@@ -657,9 +688,14 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           event.stopPropagation();
           setTimelineBar(host, !!host._tlOff);
         });
-        swipe(tab, (direction) => {
-          if (direction === "up" || direction === "down") setTimelineBar(host, direction === "up");
-        });
+        swipe(
+          tab,
+          (direction) => {
+            if (direction === "up" || direction === "down") setTimelineBar(host, direction === "up");
+          },
+          undefined,
+          true
+        );
         card.appendChild(tab);
       }
       if (!bar._flxSwipe) {
@@ -667,18 +703,8 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         // Swipe the bar down to tuck it away. A swipe is not a tap on the
         // timeline: swallow the click that follows it.
         swipe(bar, (direction) => {
-          if (wideScreen() && direction === "down" && !host._tlOff) {
-            host._flxTlSwiped = Date.now();
-            setTimelineBar(host, false);
-          }
+          if (wideScreen() && direction === "down" && !host._tlOff) setTimelineBar(host, false);
         });
-        bar.addEventListener(
-          "click",
-          (event) => {
-            if (Date.now() - (host._flxTlSwiped || 0) < 400) event.stopPropagation();
-          },
-          true
-        );
       }
       if (!card._flxTlEdgeSwipe) {
         card._flxTlEdgeSwipe = true;
@@ -688,7 +714,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           (direction) => {
             if (wideScreen() && direction === "up" && host._tlOff && host.hasAttribute("tl-live")) setTimelineBar(host, true);
           },
-          (event) => host._tlOff && card.getBoundingClientRect().bottom - event.clientY < 40
+          (event) => host._tlOff && card.getBoundingClientRect().bottom - event.clientY < 40 && edgeOk(host, event)
         );
       }
     };
