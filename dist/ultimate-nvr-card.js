@@ -4887,6 +4887,10 @@ const customElements = (() => {
  *      recording of the same moment.
  *  10. Privacy blur for screenshots: add ?blur to the page address and every
  *      camera picture and photo is blurred, while the wall itself stays sharp.
+ *  11. Replays in browsers without built-in HLS (Firefox, desktop Chrome):
+ *      played from the recorder's fast download instead of its real-time
+ *      playback stream, so the video stays well ahead instead of arriving one
+ *      keyframe-gap (often 2 s) at a time and skipping.
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -6716,6 +6720,50 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       stage.dataset.url = "";
       host._renderLive(stage);
     };
+    // ---- 11. replays from the fast download ------------------------------------------
+    // The recorder's playback stream comes at real time, a keyframe gap at a
+    // time (measured: 1.1 MB every 2 s on a 2 s-GOP camera), so the player runs
+    // dry and skips at every gap. The same footage from its download endpoint
+    // (the card's Save link) arrives about 25x faster. Browsers that play HLS
+    // themselves (iPhone, iPad) keep their own route.
+    const NATIVE_HLS = !!document.createElement("video").canPlayType("application/vnd.apple.mpegurl");
+    const pacedPlayback = proto._renderPlayback;
+    if (pacedPlayback) {
+      proto._renderPlayback = function (stage, ...rest) {
+        try {
+          const url = this._playbackUrl;
+          const fast = this._downloadUrl;
+          if (!NATIVE_HLS && url && fast && fast !== url && /\/clip\//.test(url) && this._flxSlowClip !== url) {
+            this._flxFastFor = { clip: url, fast };
+            this._playbackUrl = fast;
+          }
+        } catch (_) {
+          /* keep the paced stream */
+        }
+        const result = pacedPlayback.call(this, stage, ...rest);
+        Promise.resolve(result)
+          .then(() => {
+            const map = this._flxFastFor;
+            const video = stage && stage.querySelector && stage.querySelector("video");
+            if (!map || !video || video._flxFastWatch || this._playbackUrl !== map.fast) return;
+            video._flxFastWatch = true;
+            // The fast route failed for this moment: back to the paced stream, once.
+            video.addEventListener(
+              "error",
+              () => {
+                if (this._playbackUrl !== map.fast || !stage.isConnected) return;
+                this._flxSlowClip = map.clip;
+                this._playbackUrl = map.clip;
+                stage.dataset.url = "";
+                this._renderPlayback(stage);
+              },
+              { once: true }
+            );
+          })
+          .catch(() => {});
+        return result;
+      };
+    }
     // ... or on its next state update.
     const hassProp = Object.getOwnPropertyDescriptor(proto, "hass");
     if (hassProp && hassProp.set) {
