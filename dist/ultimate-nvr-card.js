@@ -6675,6 +6675,22 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         return result;
       };
     }
+    // The live picture needs the Advanced Camera Card. When that file is still
+    // loading as the wall is drawn (a cold start on a tablet), the card falls
+    // back to its own player: the small stream and no joystick, for good. Once
+    // the camera card is in, draw the live picture again (at most every 10 s).
+    const unstickLive = (host) => {
+      if (host._mode !== "live" || !host.isConnected || !customElements.get("advanced-camera-card")) return;
+      const stage = host.shadowRoot && host.shadowRoot.querySelector("#stage");
+      if (!stage || !W.entryFor(host, host._selected) || stage.querySelector("advanced-camera-card")) return;
+      // The card's own player leaves a video or picture; the camera card's
+      // stage is still empty while it is being built.
+      if (!stage.querySelector("video, img")) return;
+      if (Date.now() - (host._flxUnstickLiveAt || 0) < 10000) return;
+      host._flxUnstickLiveAt = Date.now();
+      stage.dataset.url = "";
+      host._renderLive(stage);
+    };
     // ... or on its next state update.
     const hassProp = Object.getOwnPropertyDescriptor(proto, "hass");
     if (hassProp && hassProp.set) {
@@ -6685,6 +6701,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           hassProp.set.call(this, hass);
           try {
             catchUp(this);
+            unstickLive(this);
           } catch (_) {
             /* extras only */
           }
