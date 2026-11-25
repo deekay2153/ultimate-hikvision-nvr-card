@@ -171,7 +171,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       .flx-sub em { font-style: normal; opacity: .55; }
       @keyframes flx-sub-pulse { 50% { opacity: .35; } }
       @media (prefers-reduced-motion: reduce) { .flx-sub i.rec { animation: none; } }
-      @media (max-height: 500px) { .flx-sub { display: none; } .flx-chip { width: 28px; height: 28px; } }
+      @media (max-height: 500px) { :host([wall]) .flx-sub { display: none; } :host([wall]) .flx-chip { width: 28px; height: 28px; } }
       /* The tile's REC marker as a real button, drawn exactly as before. */
       .flx-rec {
         display: none; position: absolute; left: 7px; top: 7px; height: 20px; box-sizing: border-box;
@@ -509,6 +509,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         for (const columns of FILL_COLUMNS) {
           if (!sumFor(columns, tiles)) continue; // this layout would leave a hole
           const cell = (width - (columns - 1) * GAP) / columns;
+          if (cell < 170) continue; // tiles this small: better to scroll
           const rows = Math.max(3, Math.ceil((9 + tiles) / columns));
           const natural = fixed + rows * ((cell * 9) / 16) + (rows - 1) * GAP;
           if (natural <= room && (!best || natural > best.natural)) best = { columns, rows, natural };

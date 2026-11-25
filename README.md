@@ -54,7 +54,7 @@ type: custom:ultimate-nvr-card
 device: DS-7608NI-…        # which recorder, if you have more than one
 channels: [1, 2, 5]        # which cameras, in this order (default: all)
 default_mode: live         # or: playback
-columns: 5                 # tiles per row (a wall that fills the screen picks 5, 4 or 3 itself)
+columns: 5                 # tiles per row (a wall that fills the screen picks 3 to 7 itself)
 columns_narrow: 2          # ... on a phone
 live_tiles: true           # live video on the small tiles (all: phones too)
 fill: true                 # fill the screen on wide screens (false: keep 16:9 rows)
