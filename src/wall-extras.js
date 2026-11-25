@@ -219,24 +219,25 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         :host([wall][tl-off]) .fl-livetl { max-height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; visibility: hidden; transition: max-height .28s cubic-bezier(.2, .8, .2, 1), opacity .2s, margin .28s, visibility 0s .28s; }
         :host([wall]) { --flx-side-w: 250px; }
         :host([wall][side-off]) { --flx-side-w: 0px; }
-        /* Lives in the bar's own bottom-right corner (past 24:00); with the
-           bar away it becomes a tab on the bottom edge, same corner. */
+        /* A pull tab on the bar's top edge, in the middle (above 12:00): half
+           on the bar, half in the gap above it, clear of the hour labels.
+           With the bar away it becomes a tab on the bottom edge, same place. */
         .flx-tl-tab {
-          position: absolute; z-index: 6; right: calc(var(--flx-side-w, 250px) + 12px); bottom: 12px;
-          width: 26px; height: 20px; padding: 0; border: 0; border-radius: 6px; cursor: pointer;
-          display: grid; place-items: center; color: rgba(255,255,255,.7);
-          background: rgba(255,255,255,.08);
-          transition: bottom .28s cubic-bezier(.2, .8, .2, 1), right .28s cubic-bezier(.2, .8, .2, 1),
-            width .28s, border-radius .28s, background .2s, color .2s;
+          position: absolute; z-index: 6; left: calc((100% - var(--flx-side-w, 250px)) / 2);
+          bottom: calc(var(--flx-tl-h, 78px) - 3px); transform: translateX(-50%);
+          width: 48px; height: 14px; padding: 0; border: 0; border-radius: 8px; cursor: pointer;
+          display: grid; place-items: center; color: rgba(255,255,255,.8);
+          background: rgba(20,23,31,.95); box-shadow: 0 2px 10px -4px rgba(0,0,0,.7);
+          transition: bottom .28s cubic-bezier(.2, .8, .2, 1), left .28s cubic-bezier(.2, .8, .2, 1),
+            width .28s, border-radius .28s, background .2s;
           touch-action: none;
         }
         :host([wall][tl-off]) .flx-tl-tab {
-          bottom: 0; width: 64px; height: 16px; border-radius: 10px 10px 0 0; color: rgba(255,255,255,.8);
-          background: rgba(20,23,31,.9); box-shadow: 0 -4px 14px -6px rgba(0,0,0,.6);
+          bottom: 0; width: 64px; height: 16px; border-radius: 10px 10px 0 0;
+          box-shadow: 0 -4px 14px -6px rgba(0,0,0,.6);
         }
-        .flx-tl-tab:hover { background: rgba(255,255,255,.16); color: #fff; }
-        :host([wall][tl-off]) .flx-tl-tab:hover { background: rgba(32,36,47,.96); }
-        .flx-tl-tab::before { content: ""; position: absolute; inset: -10px -8px -6px -8px; }
+        .flx-tl-tab:hover { background: rgba(32,36,47,.98); color: #fff; }
+        .flx-tl-tab::before { content: ""; position: absolute; inset: -12px -10px -6px -10px; }
         .flx-tl-tab svg { width: 14px; height: 14px; fill: currentColor; transform: rotate(90deg); transition: transform .28s; }
         :host([wall][tl-off]) .flx-tl-tab svg { transform: rotate(-90deg); }
         :host([wall]:not([tl-live])) .flx-tl-tab { display: none; }
