@@ -1884,7 +1884,9 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         try {
           const url = this._playbackUrl;
           const fast = this._downloadUrl;
-          if (!NATIVE_HLS && url && fast && fast !== url && /\/clip\//.test(url) && this._flxSlowClip !== url) {
+          if (this._flxPaceNext && url && /\/clip\//.test(url)) {
+            this._flxPaceNext = false; // this one clip on the paced stream (see the fallback)
+          } else if (!NATIVE_HLS && url && fast && fast !== url && /\/clip\//.test(url)) {
             this._flxFastFor = { clip: url, fast };
             this._playbackUrl = fast;
           }
@@ -1898,18 +1900,32 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
             const video = stage && stage.querySelector && stage.querySelector("video");
             if (!map || !video || video._flxFastWatch || this._playbackUrl !== map.fast) return;
             video._flxFastWatch = true;
-            // The fast route failed for this moment: back to the paced stream, once.
-            video.addEventListener(
-              "error",
-              () => {
-                if (this._playbackUrl !== map.fast || !stage.isConnected) return;
-                this._flxSlowClip = map.clip;
+            const range = /\/(\d+)\/(\d+)\.mp4/.exec(map.fast);
+            const length = range ? Number(range[2]) - Number(range[1]) : 0;
+            // The fast route failed (an error, nothing within 8 s, or it ended
+            // short): carry on from the same moment on the paced stream.
+            let done = false;
+            const fallBack = () => {
+              if (done || this._playbackUrl !== map.fast || !stage.isConnected) return;
+              done = true;
+              clearTimeout(timer);
+              const at = video.currentTime || 0;
+              this._flxPaceNext = true;
+              if (at > 1 && this._cursor && this._playFrom) {
+                this._playFrom(new Date(this._cursor.getTime() + at * 1000));
+              } else {
                 this._playbackUrl = map.clip;
                 stage.dataset.url = "";
                 this._renderPlayback(stage);
-              },
-              { once: true }
-            );
+              }
+            };
+            const timer = setTimeout(() => {
+              if (video.readyState < 2) fallBack();
+            }, 8000);
+            video.addEventListener("error", fallBack, { once: true });
+            video.addEventListener("ended", () => {
+              if (length && video.currentTime < length - 3) fallBack();
+            });
           })
           .catch(() => {});
         return result;
