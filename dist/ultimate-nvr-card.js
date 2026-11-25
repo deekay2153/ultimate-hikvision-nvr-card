@@ -5014,6 +5014,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       .flx-lm { margin-right: 8px; }
       .flx-lm button { width: 36px; padding: 0 !important; display: grid; place-items: center; }
       .flx-lm svg { width: 17px; height: 17px; fill: currentColor; display: block; }
+      .flx-lm button:disabled { opacity: .35; cursor: default; }
       @media (max-width: 899px), (max-height: 500px) { .flx-lm { display: none !important; } }
       @media (min-width: 900px) and (min-height: 501px) {
         :host([wall][lm="single"]) .fl-main .tile,
@@ -5301,7 +5302,6 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     ];
     const layoutOf = (host) => {
       if (NARROW.matches || SHORT.matches) return "focus"; // phones keep their own layout
-      if (host._mode === "playback") return "focus"; // History plays on the big picture
       if (!host._flxLayout) {
         let saved = null;
         try {
@@ -5313,6 +5313,8 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         const wanted = LAYOUTS.some(([id]) => id === option) ? option : "focus";
         host._flxLayout = LAYOUTS.some(([id]) => id === saved) ? saved : wanted;
       }
+      // History plays on the big picture: Grid gives way to Focus there.
+      if (host._mode === "playback" && host._flxLayout === "grid") return "focus";
       return host._flxLayout;
     };
     const paintLayoutSwitch = (host) => {
@@ -5336,7 +5338,10 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         head.insertBefore(box, head.querySelector(".modes") || null);
       }
       const current = host.getAttribute("lm") || "focus";
-      box.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lm === current)));
+      box.querySelectorAll("button").forEach((b) => {
+        b.setAttribute("aria-pressed", String(b.dataset.lm === current));
+        b.disabled = b.dataset.lm === "grid" && host._mode === "playback";
+      });
     };
     // `remember: false` for the automatic switch (a camera opened from Grid):
     // the wall still opens in Grid next time.
@@ -5382,10 +5387,20 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           (event) => {
             if (host.getAttribute("lm") !== "grid" || NARROW.matches || SHORT.matches) return;
             const target = event.target;
-            if (!target.closest || target.closest(".flx-rec, .fl-ptz, .fl-presets, .fl-status")) return;
+            if (!target.closest) return;
+            // Buttons keep their own jobs (a gate's Open, mute, REC, PTZ, views).
+            if (target.closest("button, a, select, input, .fast-buttons, .flx-rec, .fl-ptz, .fl-presets, .fl-status")) return;
+            if (target.closest(".tile")) {
+              // The card picks the camera as usual; then open it in Focus.
+              setTimeout(() => setLayout(host, "focus", false), 0);
+              return;
+            }
             const stage = target.closest(".stage");
-            if (!target.closest(".tile") && !(stage && !stage.classList.contains("fl-full"))) return;
-            setTimeout(() => setLayout(host, "focus", false), 0);
+            if (stage && !stage.classList.contains("fl-full")) {
+              // The picked camera's own cell: Focus, not full screen.
+              event.stopPropagation();
+              setLayout(host, "focus", false);
+            }
           },
           true
         );
@@ -5447,7 +5462,6 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         const root = host.shadowRoot;
         const main = root && root.querySelector(".fl-main");
         const stage = root && root.querySelector(".fl-main > .stage");
-        if (stage && stage.classList.contains("fl-full")) return; // leave the wall underneath alone
         const layout = layoutOf(host);
         if (host.getAttribute("lm") !== layout) {
           // The screen crossed the phone / wide line (an iPad turned), or
@@ -5457,6 +5471,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           if (W.syncTiles) W.syncTiles(host);
         }
         orderCells(host, layout);
+        if (stage && stage.classList.contains("fl-full")) return; // leave the wall underneath alone
         const tiles = main
           ? [...main.querySelectorAll(".tile")].filter((el) => getComputedStyle(el).display !== "none").length
           : 0;
@@ -5842,6 +5857,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           title._flxObs = new MutationObserver(() => paintTitle(host));
           title._flxObs.observe(title, { childList: true });
         }
+        if (host.getAttribute("lm") === "grid") orderCells(host, "grid");
         if (title.dataset.flx === sig && title.querySelector(".flx-chip")) return;
         title.dataset.flx = sig;
         const label = history ? "History" : recording ? "Recording" : "Live";
