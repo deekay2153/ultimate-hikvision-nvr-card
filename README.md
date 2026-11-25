@@ -20,9 +20,21 @@ built for Hikvision.
   handle) for a bigger wall; swipe in from the right edge to bring it back.
   The 24-hour bar under the live wall slides away the same way (down / up).
   On an iPad the screen edges belong to the system, so use the handles there.
+- **Always fills the screen**, whatever the number of cameras, with a
+  Focus / Grid / Single switch in the header.
 - **Phones and tablets too:** portrait and landscape layouts.
+- **Screenshot mode:** add `?blur` to the page address and every camera
+  picture is blurred, so you can share your wall without sharing your house.
 
-<!-- screenshots / GIF go here -->
+![The camera wall: one big live picture, every other camera as a live tile, today's people and vehicles down the side](docs/wall.jpg)
+
+<sub>Camera pictures blurred with the card's own screenshot mode (add `?blur` to the page address).</sub>
+
+| PTZ you can actually use | Every detection, one tap away | The whole day at a glance |
+| :---: | :---: | :---: |
+| ![Joystick, tap-to-aim and zoom on the big picture](docs/ptz.jpg) | ![Detections list with a PTZ button on twin-lens rows](docs/detections.jpg) | Green = person, amber = vehicle, on a 24-hour bar for the camera in the big picture. Tap a moment to watch it. |
+
+![24-hour bar with person and vehicle markers](docs/timeline.jpg)
 
 ## What you need
 
