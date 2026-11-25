@@ -6682,11 +6682,23 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     const unstickLive = (host) => {
       if (host._mode !== "live" || !host.isConnected || !customElements.get("advanced-camera-card")) return;
       const stage = host.shadowRoot && host.shadowRoot.querySelector("#stage");
-      if (!stage || !W.entryFor(host, host._selected) || stage.querySelector("advanced-camera-card")) return;
+      if (!stage || !W.entryFor(host, host._selected)) return;
+      if (stage.querySelector("advanced-camera-card")) {
+        host._flxUnstickTries = 0; // healthy: a later fallback may try again
+        return;
+      }
       // The card's own player leaves a video or picture; the camera card's
       // stage is still empty while it is being built.
       if (!stage.querySelector("video, img")) return;
+      // Three tries per camera: if the camera card keeps failing, keep the
+      // fallback picture instead of restarting it every 10 s.
+      if (host._flxUnstickCh !== host._selected) {
+        host._flxUnstickCh = host._selected;
+        host._flxUnstickTries = 0;
+      }
+      if ((host._flxUnstickTries || 0) >= 3) return;
       if (Date.now() - (host._flxUnstickLiveAt || 0) < 10000) return;
+      host._flxUnstickTries = (host._flxUnstickTries || 0) + 1;
       host._flxUnstickLiveAt = Date.now();
       stage.dataset.url = "";
       host._renderLive(stage);
