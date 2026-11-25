@@ -30,9 +30,14 @@ built for Hikvision.
 
 <sub>Camera pictures blurred with the card's own screenshot mode (add `?blur` to the page address).</sub>
 
-| PTZ you can actually use | Every detection, one tap away | The whole day at a glance |
-| :---: | :---: | :---: |
-| ![Joystick, tap-to-aim and zoom on the big picture](docs/ptz.jpg) | ![Detections list with a PTZ button on twin-lens rows](docs/detections.jpg) | Green = person, amber = vehicle, on a 24-hour bar for the camera in the big picture. Tap a moment to watch it. |
+<table>
+<tr>
+<td align="center" width="50%"><b>PTZ you can actually use</b><br><br><img src="docs/ptz.jpg" width="300" alt="Joystick, tap-to-aim and zoom on the big picture"><br><br>Joystick in any direction, hold-to-zoom, tap the picture to aim.</td>
+<td align="center" width="50%"><b>Every detection, one tap away</b><br><br><img src="docs/detections.jpg" width="250" alt="Detections list with a PTZ button on twin-lens rows"><br><br>Today's people and vehicles across every camera.</td>
+</tr>
+</table>
+
+<b>The whole day at a glance:</b> green = person, amber = vehicle, on a 24-hour bar for the camera in the big picture. Tap a moment to watch it.
 
 ![24-hour bar with person and vehicle markers](docs/timeline.jpg)
 
