@@ -29,6 +29,9 @@
  *   7. The detections bar slides away and back (wide screens): swipe it to
  *      the right, or tap its handle; swipe in from the right edge, or tap the
  *      handle, to bring it back. Remembered per browser.
+ *   8. The 24-hour bar under the live wall does the same: swipe it down, or
+ *      tap its handle; swipe up from the bottom edge, or tap the handle, to
+ *      bring it back. History always keeps it (it is how you scrub).
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -203,6 +206,34 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         }
       }
       @media (max-width: 899px), (max-height: 500px) { .flx-side-tab { display: none; } }
+      /* 8. The 24-hour bar slides away (wide screens, live only). */
+      @media (min-width: 900px) and (min-height: 501px) {
+        :host([wall]) .fl-livetl {
+          touch-action: pan-x; overflow: hidden; max-height: 120px;
+          transition: max-height .28s cubic-bezier(.2, .8, .2, 1), opacity .2s, margin .28s;
+        }
+        :host([wall][tl-off]) .fl-livetl { max-height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; }
+        :host([wall]) { --flx-side-w: 250px; }
+        :host([wall][side-off]) { --flx-side-w: 0px; }
+        .flx-tl-tab {
+          position: absolute; z-index: 6; left: calc((100% - var(--flx-side-w, 250px)) / 2);
+          bottom: calc(var(--flx-tl-h, 40px) + 4px); transform: translateX(-50%);
+          width: 64px; height: 16px; padding: 0; border: 0; border-radius: 10px 10px 0 0; cursor: pointer;
+          display: grid; place-items: center; color: rgba(255,255,255,.8);
+          background: rgba(20,23,31,.9); box-shadow: 0 -4px 14px -6px rgba(0,0,0,.6);
+          transition: bottom .28s cubic-bezier(.2, .8, .2, 1), left .28s cubic-bezier(.2, .8, .2, 1), background .2s;
+          touch-action: none;
+        }
+        .flx-tl-tab:hover { background: rgba(32,36,47,.96); }
+        .flx-tl-tab svg { width: 14px; height: 14px; fill: currentColor; transform: rotate(90deg); transition: transform .28s; }
+        :host([wall][tl-off]) .flx-tl-tab { bottom: 0; }
+        :host([wall][tl-off]) .flx-tl-tab svg { transform: rotate(-90deg); }
+        :host([wall]:not([tl-live])) .flx-tl-tab { display: none; }
+        @media (prefers-reduced-motion: reduce) {
+          :host([wall]) .fl-livetl, .flx-tl-tab, .flx-tl-tab svg { transition: none; }
+        }
+      }
+      @media (max-width: 899px), (max-height: 500px) { .flx-tl-tab { display: none; } }
       /* 6. Layout switch: Focus / Grid / Single, beside Live / History. */
       .flx-lm { margin-right: 8px; }
       .flx-lm button { width: 36px; padding: 0 !important; display: grid; place-items: center; }
@@ -518,6 +549,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         const quick = Date.now() - start.t < 700;
         start = null;
         if (quick && Math.abs(dx) > 50 && Math.abs(dy) < 40) onSwipe(dx > 0 ? "right" : "left", event);
+        else if (quick && Math.abs(dy) > 40 && Math.abs(dx) < 50) onSwipe(dy > 0 ? "down" : "up", event);
       });
       el.addEventListener("pointercancel", () => {
         start = null;
@@ -571,6 +603,92 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
             if (wideScreen() && direction === "left" && host._sideOff) setSide(host, true);
           },
           (event) => host._sideOff && card.getBoundingClientRect().right - event.clientX < 40
+        );
+      }
+    };
+
+    // ---- 8. 24-hour bar: swipe / handle ------------------------------------------------
+    const TL_KEY = "ultimate-nvr-timeline";
+    const setTimelineBar = (host, open, remember = true) => {
+      host._tlOff = !open;
+      host.toggleAttribute("tl-off", !open);
+      if (remember) {
+        try {
+          window.localStorage.setItem(TL_KEY, open ? "open" : "closed");
+        } catch (_) {
+          /* not remembered in a private window */
+        }
+      }
+      const tab = host.shadowRoot && host.shadowRoot.querySelector(".flx-tl-tab");
+      if (tab) tab.setAttribute("aria-label", open ? "Hide the 24-hour bar" : "Show the 24-hour bar");
+      haptic("light");
+      clearTimeout(host._flxTlFit);
+      host._flxTlFit = setTimeout(() => fillScreen(host), 320);
+    };
+    const ensureTimelineBar = (host) => {
+      const root = host.shadowRoot;
+      const card = root && root.querySelector("ha-card");
+      if (!card) return;
+      if (!host._flxTlInit) {
+        host._flxTlInit = true;
+        let saved = null;
+        try {
+          saved = window.localStorage.getItem(TL_KEY);
+        } catch (_) {
+          /* private window */
+        }
+        if (saved === "closed") {
+          host._tlOff = true;
+          host.toggleAttribute("tl-off", true);
+        }
+      }
+      const bar = root.querySelector(".fl-main > .fl-livetl");
+      // The handle only shows while there is a live 24-hour bar to hide.
+      host.toggleAttribute("tl-live", !!bar);
+      if (!bar) return;
+      if (!host._tlOff && bar.offsetHeight) host.style.setProperty("--flx-tl-h", `${bar.offsetHeight + 2}px`);
+      if (!card.querySelector(":scope > .flx-tl-tab")) {
+        const tab = document.createElement("button");
+        tab.type = "button";
+        tab.className = "flx-tl-tab";
+        tab.setAttribute("aria-label", host._tlOff ? "Show the 24-hour bar" : "Hide the 24-hour bar");
+        tab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8.6 16.6 13.2 12 8.6 7.4 10 6l6 6-6 6z"/></svg>';
+        tab.addEventListener("click", (event) => {
+          event.stopPropagation();
+          setTimelineBar(host, !!host._tlOff);
+        });
+        swipe(tab, (direction) => {
+          if (direction === "up" || direction === "down") setTimelineBar(host, direction === "up");
+        });
+        card.appendChild(tab);
+      }
+      if (!bar._flxSwipe) {
+        bar._flxSwipe = true;
+        // Swipe the bar down to tuck it away. A swipe is not a tap on the
+        // timeline: swallow the click that follows it.
+        swipe(bar, (direction) => {
+          if (wideScreen() && direction === "down" && !host._tlOff) {
+            host._flxTlSwiped = Date.now();
+            setTimelineBar(host, false);
+          }
+        });
+        bar.addEventListener(
+          "click",
+          (event) => {
+            if (Date.now() - (host._flxTlSwiped || 0) < 400) event.stopPropagation();
+          },
+          true
+        );
+      }
+      if (!card._flxTlEdgeSwipe) {
+        card._flxTlEdgeSwipe = true;
+        // With the bar away: swipe up from the bottom edge to bring it back.
+        swipe(
+          card,
+          (direction) => {
+            if (wideScreen() && direction === "up" && host._tlOff && host.hasAttribute("tl-live")) setTimelineBar(host, true);
+          },
+          (event) => host._tlOff && card.getBoundingClientRect().bottom - event.clientY < 40
         );
       }
     };
@@ -1504,6 +1622,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       watchNarrow(host);
       watchFill(host);
       ensureSideBar(host);
+      ensureTimelineBar(host);
       applyLayout(host);
       fillScreen(host);
       if (!host._flxFillSettle) {
