@@ -4585,7 +4585,8 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         dayEnd: end.getTime(),
         view: { from: 0, to: 1 },
         blocks: mine ? host._liveBlocks.blocks : [],
-        detections: (host._detLists || {})[host._selected] || [],
+        detections: [host._selected, ...(((host._config || {}).ptz || {}).channel === host._selected ? host._config.ptz.linked || [] : [])]
+          .flatMap((c) => (host._detLists || {})[c] || []), // a PTZ shows its linked cameras' people too
         filter: "all",
         at: new Date(),
         label: "Live",
@@ -6692,6 +6693,17 @@ const customElements = (() => {
             ...(config.ptz.joystick || {}),
           },
         };
+      }
+      // A twin-lens camera (a panoramic lens that steers a PTZ, e.g. TandemVu)
+      // shows up as two channels at one address. It spots people and vehicles
+      // on the panoramic lens only, so the PTZ borrows that lens's markers.
+      if (next.ptz && next.ptz.linked === undefined) {
+        const channels = device.channels || [];
+        const own = channels.find((channel) => channel.id === Number(next.ptz.channel));
+        const twins = own && own.ip_address
+          ? channels.filter((channel) => channel.id !== own.id && channel.ip_address === own.ip_address).map((c) => c.id)
+          : [];
+        if (twins.length) next.ptz = { ...next.ptz, linked: twins };
       }
       host._config = next;
       // Slots with no camera (offline) are left off unless asked for.
