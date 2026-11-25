@@ -1,0 +1,1072 @@
+/**
+ * Hikvision NVR card.
+ *
+ * Live view + history playback in one card. No bundled dependencies: video is
+ * played by Home Assistant's own <ha-hls-player>, which already ships hls.js
+ * and handles browsers without native HLS.
+ *
+ * type: custom:hikvision-nvr-card
+ */
+
+// Read from our own URL (…/hikvision-nvr-card.js?v=1.2.3) rather than a second
+// hand-maintained constant. A version banner that disagrees with the installed
+// integration is worse than none -- it sends you debugging the wrong build.
+const CARD_VERSION =
+  new URL(import.meta.url).searchParams.get("v") || "dev";
+
+console.info(
+  `%c HIKVISION-NVR-CARD %c ${CARD_VERSION} `,
+  "color:#fff;background:#03a9f4;font-weight:700",
+  "color:#03a9f4;background:#fff"
+);
+
+const API = "hikvision_nvr";
+const SNAPSHOT_INTERVAL = 10000;
+
+// How much video a click on the timeline fetches, and therefore how much the
+// Download button saves. One control for both, so what you save is what you
+// just watched. The server caps a clip at 2 hours.
+const CLIP_LENGTHS = [
+  { seconds: 30, label: "30 sec" },
+  { seconds: 60, label: "1 min" },
+  { seconds: 120, label: "2 min" },
+  { seconds: 300, label: "5 min" },
+  { seconds: 600, label: "10 min" },
+  { seconds: 1800, label: "30 min" },
+  { seconds: 3600, label: "1 hour" },
+];
+const DEFAULT_CLIP_SECONDS = 600;
+
+// How long the native player gets to produce a frame before we fall back
+// to HLS. Generous: WebRTC lands in about a second when it works.
+const NATIVE_LIVE_TIMEOUT = 6000;
+
+/** Force Home Assistant to load its camera chunk, which defines ha-hls-player. */
+let playerReady = null;
+function ensurePlayer() {
+  if (!playerReady) {
+    playerReady = (async () => {
+      if (customElements.get("ha-hls-player")) return;
+      const helpers = await window.loadCardHelpers();
+      // Creating a camera card pulls in the video-player chunk as a side effect.
+      const card = await helpers.createCardElement({
+        type: "picture-entity",
+        entity: "camera.__hikvision_probe__",
+        camera_view: "live",
+      });
+      card.remove?.();
+      await Promise.all([
+        customElements.whenDefined("ha-hls-player"),
+        customElements.whenDefined("ha-camera-stream"),
+      ]);
+    })().catch(() => {
+      /* fall back to a plain <video> below */
+    });
+  }
+  return playerReady;
+}
+
+// Channel names and NVR error strings are device-controlled, so they never go
+// into innerHTML raw.
+const esc = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+
+/** Home Assistant's callApi rejects with an object, not an Error. */
+const errText = (err) => {
+  if (!err) return "unknown error";
+  if (typeof err === "string") return err;
+  const body = err.body?.message || err.body?.error || err.body;
+  return (
+    err.message ||
+    [err.status_code, typeof body === "string" ? body : err.error]
+      .filter(Boolean)
+      .join(" ") ||
+    JSON.stringify(err)
+  );
+};
+
+const pad = (n) => String(n).padStart(2, "0");
+const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const hhmmss = (d) => `${hhmm(d)}:${pad(d.getSeconds())}`;
+const isoDate = (d) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+const STYLE = `
+  :host { display: block; }
+  ha-card { overflow: hidden; display: flex; flex-direction: column; }
+  .head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--divider-color);
+  }
+  .head .title { font-weight: 500; flex: 1; }
+  .modes { display: flex; border: 1px solid var(--divider-color); border-radius: 999px; overflow: hidden; }
+  .modes button {
+    border: 0; background: none; color: var(--secondary-text-color);
+    padding: 5px 14px; cursor: pointer; font: inherit; font-size: 13px;
+  }
+  .modes button[aria-pressed="true"] {
+    background: var(--primary-color); color: var(--text-primary-color, #fff);
+  }
+  .grid { display: grid; gap: 2px; background: var(--divider-color); }
+  .tile {
+    position: relative; aspect-ratio: 16 / 9; background: #000;
+    cursor: pointer; overflow: hidden;
+  }
+  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tile.offline img { filter: grayscale(1) brightness(0.4); }
+  .tile .label {
+    position: absolute; inset: auto 0 0 0; padding: 4px 8px;
+    font-size: 12px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.75));
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #2ecc71; flex: none; }
+  .tile.offline .dot { background: var(--error-color, #e74c3c); }
+  .tile.active { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+  .stage {
+    position: relative; background: #000; aspect-ratio: 16 / 9;
+    /* A player or overlay must never bleed past the stage onto the
+       controls below, and the stage must not be shrunk by the flex
+       column into overlapping them. */
+    overflow: hidden; flex: none;
+  }
+  .stage > * { width: 100%; height: 100%; display: block; }
+  .stage video { object-fit: contain; background: #000; }
+  .overlay {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: #fff; font-size: 13px; background: rgba(0,0,0,.5); text-align: center;
+    padding: 12px;
+  }
+  .controls {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; flex-wrap: wrap;
+    position: relative; z-index: 1;
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color);
+  }
+  .controls input[type="date"], .controls select {
+    background: var(--card-background-color); color: var(--primary-text-color);
+    border: 1px solid var(--divider-color); border-radius: 6px; padding: 4px 8px;
+    font: inherit; font-size: 13px;
+  }
+  .controls .spacer { flex: 1; }
+  .icon-btn {
+    border: 0; background: none; cursor: pointer; color: var(--secondary-text-color);
+    padding: 4px 8px; border-radius: 6px; font: inherit; font-size: 13px;
+  }
+  .icon-btn:hover { background: var(--secondary-background-color); }
+  .icon-btn[disabled] { opacity: .4; cursor: default; }
+  .timeline {
+    position: relative; height: 34px; margin: 0 12px 12px;
+    background: var(--secondary-background-color); border-radius: 6px;
+    cursor: grab; overflow: hidden; touch-action: none;
+  }
+  .timeline .block { position: absolute; top: 0; bottom: 0; background: var(--primary-color); opacity: .75; }
+  .timeline .block.motion { background: var(--warning-color, #ff9800); }
+  .timeline .cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 3px #000; }
+  .timeline .hours { position: absolute; inset: 0; pointer-events: none; }
+  .timeline .hours span {
+    position: absolute; top: 2px; font-size: 9px; color: var(--secondary-text-color);
+    transform: translateX(-50%);
+  }
+  .timeline .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--divider-color); }
+  .timeline { user-select: none; touch-action: none; }
+  .timeline.dragging { cursor: grabbing; }
+  .empty { padding: 24px; text-align: center; color: var(--secondary-text-color); font-size: 13px; }
+  .err { padding: 12px; color: var(--error-color); font-size: 13px; }
+`;
+
+class HikvisionNvrCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement("hikvision-nvr-card-editor");
+  }
+
+  static getStubConfig() {
+    return { type: "custom:hikvision-nvr-card", columns: 3 };
+  }
+
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._mode = "live";
+    this._device = null;
+    this._channels = [];
+    this._selected = null;
+    this._date = isoDate(new Date());
+    this._blocks = [];
+    this._snapshotUrls = new Map();
+    this._clipSeconds = DEFAULT_CLIP_SECONDS;
+    // Live starts muted because browsers will not autoplay with sound;
+    // the speaker button is what turns it on.
+    this._muted = true;
+    // Visible slice of the day, as fractions 0..1. Zoom narrows it, pan
+    // slides it. The blocks always cover the whole day, so zooming never
+    // needs another round trip to the NVR.
+    this._view = { from: 0, to: 1 };
+    this._timers = [];
+    this._error = null;
+    this._loading = true;
+  }
+
+  setConfig(config) {
+    this._config = { columns: 3, default_mode: "live", live_stream: 1, ...config };
+    this._mode = this._config.default_mode === "playback" ? "playback" : "live";
+  }
+
+  getCardSize() {
+    return 8;
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first) this._init();
+  }
+
+  connectedCallback() {
+    if (this._hass && !this._loading) this._startSnapshots();
+    document.addEventListener("visibilitychange", this._onVisibility);
+  }
+
+  disconnectedCallback() {
+    this._stopTimers();
+    document.removeEventListener("visibilitychange", this._onVisibility);
+  }
+
+  _onVisibility = () => {
+    if (document.hidden) this._stopTimers();
+    else this._startSnapshots();
+  };
+
+  _stopTimers() {
+    this._timers.forEach(clearInterval);
+    this._timers = [];
+  }
+
+  // ------------------------------------------------------------------ data
+
+  async _api(path, options) {
+    return this._hass.callApi(options?.method || "GET", `${API}/${path}`, options?.body);
+  }
+
+  async _init() {
+    try {
+      const { devices } = await this._api("devices");
+      if (!devices.length) throw new Error("No NVR is configured");
+      const device =
+        devices.find(
+          (d) => d.id === this._config.device || d.host === this._config.device
+        ) || devices[0];
+      this._device = device;
+
+      let channels = device.channels;
+      if (this._config.channels?.length) {
+        const wanted = this._config.channels.map(Number);
+        channels = channels.filter((c) => wanted.includes(c.id));
+      }
+      this._channels = channels;
+      this._selected = channels[0]?.id ?? null;
+      await Promise.all(channels.map((c) => this._refreshSnapshot(c.id)));
+      this._loading = false;
+      this._render();
+      this._startSnapshots();
+      if (this._mode === "playback") this._loadTimeline();
+    } catch (err) {
+      this._error = errText(err);
+      this._loading = false;
+      this._render();
+    }
+  }
+
+  /** Signed URL so <img> can load it without an Authorization header. */
+  async _refreshSnapshot(channel) {
+    try {
+      const { path } = await this._hass.callWS({
+        type: "auth/sign_path",
+        path: `/api/${API}/${this._device.id}/${channel}/snapshot`,
+        // Generous: a backgrounded tab has its timers throttled, so a short
+        // expiry means it wakes and re-requests a dead URL. Home Assistant
+        // counts every rejection towards banning the browser's IP.
+        expires: 3600,
+      });
+      // No cache-buster: auth/sign_path signs an EMPTY query-parameter list,
+      // so any extra query arg invalidates the signature and Home Assistant
+      // logs it as a failed login (and eventually IP-bans the browser). Each
+      // signed path is unique anyway -- the JWT carries its own issued-at.
+      this._snapshotUrls.set(channel, path);
+      const img = this.shadowRoot.querySelector(`img[data-channel="${channel}"]`);
+      if (img) {
+        // A signed path minted before a Home Assistant restart is rejected
+        // afterwards, and every rejection counts towards HA's IP-ban tally.
+        // Drop a failed URL so the next tick signs a fresh one instead of
+        // re-requesting the dead one.
+        img.onerror = () => this._snapshotUrls.delete(channel);
+        img.src = this._snapshotUrls.get(channel);
+      }
+    } catch (err) {
+      /* a single failed thumbnail must not break the card */
+    }
+  }
+
+  _startSnapshots() {
+    this._stopTimers();
+    if (!this._device || document.hidden) return;
+    this._timers.push(
+      setInterval(() => {
+        // Only the tiles that are actually on screen.
+        for (const channel of this._channels) {
+          if (this._mode === "live" && channel.id === this._selected) continue;
+          this._refreshSnapshot(channel.id);
+        }
+      }, SNAPSHOT_INTERVAL)
+    );
+  }
+
+  async _loadTimeline() {
+    const [y, m, d] = this._date.split("-").map(Number);
+    const start = new Date(y, m - 1, d, 0, 0, 0);
+    const end = new Date(y, m - 1, d, 23, 59, 59);
+    this._dayStart = start;
+    this._dayEnd = end;
+    this._view = { from: 0, to: 1 };
+    this._blocks = [];
+    this._render();
+    try {
+      const data = await this._api(
+        `${this._device.id}/${this._selected}/timeline` +
+          `?start=${encodeURIComponent(start.toISOString())}` +
+          `&end=${encodeURIComponent(end.toISOString())}&gap=120`
+      );
+      this._blocks = data.blocks.map((b) => ({
+        start: new Date(b.start),
+        end: new Date(b.end),
+        motion: b.event_types.includes("motion"),
+      }));
+      this._error = null;
+    } catch (err) {
+      this._error = `Timeline failed: ${errText(err)}`;
+    }
+    this._render();
+  }
+
+  async _playFrom(when) {
+    // Clamp to the block the user clicked, so we never ask the NVR for a range
+    // that is mostly empty -- that is what makes seeking feel instant.
+    const block =
+      this._blocks.find((b) => when >= b.start && when <= b.end) ||
+      this._blocks.find((b) => b.end > when);
+    if (!block) return;
+    const from = when > block.start ? when : block.start;
+    // Ten minutes, not the whole block: ffmpeg starts sooner and seeking
+    // elsewhere does not leave a long remux running behind you.
+    const to = new Date(
+      Math.min(block.end.getTime(), from.getTime() + this._clipSeconds * 1000)
+    );
+    this._cursor = from;
+    this._render();
+    try {
+      const data = await this._api(
+        `${this._device.id}/${this._selected}/playback` +
+          `?start=${encodeURIComponent(from.toISOString())}` +
+          `&end=${encodeURIComponent(to.toISOString())}`
+      );
+      // mp4_url, not hls_url: these recordings carry a G.722.1 audio track that
+      // crashes Home Assistant's HLS worker, and fragmented MP4 starts sooner.
+      this._playbackUrl = data.mp4_url || data.hls_url;
+      // A separate endpoint: playback streams in real time, saving pulls the
+      // same footage from the NVR's bulk endpoint at full speed.
+      this._downloadUrl = data.download_url || data.mp4_url;
+      this._error = null;
+    } catch (err) {
+      this._error = `Playback failed: ${errText(err)}`;
+      this._playbackUrl = null;
+    }
+    this._render();
+  }
+
+  async _liveUrl() {
+    const stream = this._config.live_stream || 1;
+    const data = await this._api(
+      `${this._device.id}/${this._selected}/live?stream=${stream}`
+    );
+    return data.hls_url;
+  }
+
+  async _download() {
+    if (!this._downloadUrl) return;
+    try {
+      // sign_path signs the path with an empty parameter list, so only a
+      // path-only URL can be signed -- the clip endpoint puts its times in the
+      // path for exactly this reason.
+      const { path } = await this._hass.callWS({
+        type: "auth/sign_path",
+        path: this._downloadUrl,
+        expires: 3600,
+      });
+      const channel = this._channels.find((c) => c.id === this._selected);
+      const stamp = this._cursor ? hhmmss(this._cursor).replace(/:/g, "") : "clip";
+      const a = document.createElement("a");
+      a.href = this._hass.hassUrl ? this._hass.hassUrl(path) : path;
+      // Same-origin, so the browser honours this and saves instead of playing.
+      a.download = `${(channel ? channel.name : "camera").replace(/\s+/g, "_")}_${
+        this._date
+      }_${stamp}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      this._error = `Download failed: ${errText(err)}`;
+      this._render();
+    }
+  }
+
+  // ---------------------------------------------------------------- render
+
+  _render() {
+    const root = this.shadowRoot;
+    if (!root.querySelector("ha-card")) {  // PATCHED: card-mod can add a child first
+      const tpl = document.createElement("template"); tpl.innerHTML = `<style>${STYLE}</style><ha-card></ha-card>`; root.prepend(tpl.content);
+    }
+    const card = root.querySelector("ha-card");
+
+    if (this._loading) {
+      card.innerHTML = `<div class="empty">Loading NVR…</div>`;
+      return;
+    }
+    if (!this._device) {
+      card.innerHTML = `<div class="err">${esc(this._error || "No NVR available")}</div>`;
+      return;
+    }
+
+    const channel = this._channels.find((c) => c.id === this._selected);
+    card.innerHTML = `
+      <div class="head">
+        <div class="title">${esc(channel ? channel.name : this._device.name)}</div>
+        ${
+          this._mode === "live" && channel && channel.has_audio
+            ? `<button class="icon-btn" id="mute" title="${
+                this._muted ? "Unmute" : "Mute"
+              }">${this._muted ? "\u{1F507}" : "\u{1F50A}"}</button>`
+            : ""
+        }
+        <div class="modes">
+          <button data-mode="live" aria-pressed="${this._mode === "live"}">Live</button>
+          <button data-mode="playback" aria-pressed="${this._mode === "playback"}">History</button>
+        </div>
+      </div>
+      <div class="stage" id="stage"></div>
+      ${this._mode === "playback" ? this._playbackControls() : ""}
+      ${this._error ? `<div class="err">${esc(this._error)}</div>` : ""}
+      <div class="grid" style="grid-template-columns:repeat(${this._config.columns},1fr)">
+        ${this._channels
+          .map(
+            (c) => `
+          <div class="tile ${c.online ? "" : "offline"} ${
+              c.id === this._selected ? "active" : ""
+            }" data-channel="${c.id}">
+            <img data-channel="${c.id}" src="${esc(this._snapshotUrls.get(c.id) || "")}" alt="${esc(c.name)}">
+            <div class="label"><span class="dot"></span>${esc(c.name)}</div>
+          </div>`
+          )
+          .join("")}
+      </div>
+    `;
+
+    card.querySelectorAll(".modes button").forEach((button) =>
+      button.addEventListener("click", () => {
+        this._mode = button.dataset.mode;
+        this._playbackUrl = null;
+        this._render();
+        if (this._mode === "playback") this._loadTimeline();
+      })
+    );
+    const muteButton = card.querySelector("#mute");
+    if (muteButton) {
+      muteButton.addEventListener("click", () => {
+        this._muted = !this._muted;
+        const stage = this.shadowRoot.querySelector("#stage");
+        const native = stage && stage.querySelector("ha-camera-stream");
+        if (native) native.muted = this._muted;
+        // The element already exists, so set it on the video underneath too
+        // rather than waiting for a re-render to push the property down.
+        const stack = stage ? [stage] : [];
+        while (stack.length) {
+          const node = stack.pop();
+          if (node.tagName === "VIDEO") node.muted = this._muted;
+          if (node.shadowRoot) stack.push(...node.shadowRoot.children);
+          if (node.children) stack.push(...node.children);
+        }
+        muteButton.textContent = this._muted ? "\u{1F507}" : "\u{1F50A}";
+        muteButton.title = this._muted ? "Unmute" : "Mute";
+      });
+    }
+
+    card.querySelectorAll(".tile").forEach((tile) =>
+      tile.addEventListener("click", () => {
+        this._selected = Number(tile.dataset.channel);
+        this._playbackUrl = null;
+        this._render();
+        if (this._mode === "playback") this._loadTimeline();
+      })
+    );
+
+    if (this._mode === "playback") this._wirePlaybackControls(card);
+    this._renderStage(card.querySelector("#stage"));
+  }
+
+  /** Fraction 0..1 across the whole day -> percent across the visible view. */
+  _toView(fraction) {
+    const { from, to } = this._view;
+    return ((fraction - from) / (to - from)) * 100;
+  }
+
+  /** The timeline's contents. Repainted alone while zooming and panning: a
+   *  full re-render would replace the element a drag is anchored to. */
+  _timelineInner() {
+    const span = this._dayEnd - this._dayStart;
+    const asFraction = (time) => (time - this._dayStart) / span;
+
+    const blocks = this._blocks
+      .map((block) => {
+        const left = this._toView(asFraction(block.start));
+        const right = this._toView(asFraction(block.end));
+        if (right < -5 || left > 105) return ""; // scrolled out of view
+        const width = Math.max(right - left, 0.3);
+        return `<div class="block ${block.motion ? "motion" : ""}" style="left:${left}%;width:${width}%"></div>`;
+      })
+      .join("");
+
+    // Label density follows the zoom: every 6 hours when showing the day,
+    // down to half-hours when zoomed right in.
+    const visibleHours = (this._view.to - this._view.from) * 24;
+    const step =
+      visibleHours > 12 ? 6 : visibleHours > 6 ? 2 : visibleHours > 2 ? 1 : 0.5;
+    const ticks = [];
+    for (let hour = 0; hour <= 24; hour += step) {
+      const left = this._toView(hour / 24);
+      if (left < 0 || left > 100) continue;
+      ticks.push(`<div class="tick" style="left:${left}%"></div>`);
+      const label = Number.isInteger(hour)
+        ? pad(hour)
+        : `${pad(Math.floor(hour))}:30`;
+      ticks.push(`<span style="left:${left}%">${label}</span>`);
+    }
+
+    const cursorAt = this._cursor ? asFraction(this._cursor) : null;
+    const cursor =
+      cursorAt !== null && cursorAt >= this._view.from && cursorAt <= this._view.to
+        ? `<div class="cursor" style="left:${this._toView(cursorAt)}%"></div>`
+        : "";
+    return `<div class="hours">${ticks.join("")}</div>${blocks}${cursor}`;
+  }
+
+  /** Update the timeline in place, leaving its element and listeners intact. */
+  _paintTimeline() {
+    const timeline = this.shadowRoot.querySelector("#timeline");
+    if (!timeline) return;
+    timeline.innerHTML = this._timelineInner();
+    const whole = this._view.to - this._view.from >= 0.999;
+    for (const id of ["#zoomout", "#panleft", "#panright"]) {
+      const button = this.shadowRoot.querySelector(id);
+      if (button) button.disabled = whole;
+    }
+  }
+
+  _playbackControls() {
+    const zoomed = this._view.to - this._view.from < 0.999;
+
+    return `
+      <div class="controls">
+        <input type="date" id="date" value="${this._date}" max="${isoDate(new Date())}">
+        <button class="icon-btn" id="prev">‹ Prev</button>
+        <button class="icon-btn" id="next">Next ›</button>
+        <span class="spacer"></span>
+        <span style="font-size:12px;color:var(--secondary-text-color)">
+          ${this._cursor ? hhmmss(this._cursor) : `${this._blocks.length} recorded blocks`}
+        </span>
+        <label for="len" style="font-size:12px;color:var(--secondary-text-color)">Clip</label>
+        <select id="len" title="How much video to play and download">
+          ${CLIP_LENGTHS.map(
+            (o) =>
+              `<option value="${o.seconds}"${
+                o.seconds === this._clipSeconds ? " selected" : ""
+              }>${o.label}</option>`
+          ).join("")}
+        </select>
+        <button class="icon-btn" id="panleft" ${zoomed ? "" : "disabled"} title="Move the view earlier">◀</button>
+        <button class="icon-btn" id="panright" ${zoomed ? "" : "disabled"} title="Move the view later">▶</button>
+        <button class="icon-btn" id="zoomout" ${zoomed ? "" : "disabled"} title="Show the whole day">Whole day</button>
+        <button class="icon-btn" id="download" ${this._downloadUrl ? "" : "disabled"}>Download</button>
+      </div>
+      <div class="timeline" id="timeline">${this._timelineInner()}</div>
+    `;
+  }
+
+  _wirePlaybackControls(card) {
+    card.querySelector("#date").addEventListener("change", (event) => {
+      this._date = event.target.value;
+      this._cursor = null;
+      this._playbackUrl = null;
+      this._loadTimeline();
+    });
+
+    const timeline = card.querySelector("#timeline");
+    const MIN_SPAN = 2 / (24 * 60); // two minutes, as a fraction of a day
+
+    /** Where along the whole day a pointer is, 0..1. */
+    const pointerFraction = (event) => {
+      const rect = timeline.getBoundingClientRect();
+      const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+      const { from, to } = this._view;
+      return from + ratio * (to - from);
+    };
+
+    const clampView = (from, span) => {
+      const width = Math.min(Math.max(span, MIN_SPAN), 1);
+      const start = Math.min(Math.max(from, 0), 1 - width);
+      this._view = { from: start, to: start + width };
+      this._paintTimeline();
+    };
+
+    timeline.addEventListener("click", (event) => {
+      if (this._panned) return; // the click that ends a drag is not a seek
+      this._playFrom(
+        new Date(
+          this._dayStart.getTime() +
+            pointerFraction(event) * (this._dayEnd - this._dayStart)
+        )
+      );
+    });
+
+    // Wheel zooms about the pointer, so the moment under the cursor stays put.
+    timeline.addEventListener(
+      "wheel",
+      (event) => {
+        event.preventDefault();
+        const anchor = pointerFraction(event);
+        const { from, to } = this._view;
+        const span = (to - from) * (event.deltaY > 0 ? 1.25 : 0.8);
+        clampView(anchor - (anchor - from) * (span / (to - from)), span);
+      },
+      { passive: false }
+    );
+
+    // Drag to pan; two fingers to pinch.
+    let drag = null;
+    const points = new Map();
+    timeline.addEventListener("pointerdown", (event) => {
+      points.set(event.pointerId, event.clientX);
+      // Capture keeps the drag alive if the pointer leaves the bar, but it
+      // throws for a pointer the element does not recognise -- and an
+      // exception here would abort the handler and silently kill panning.
+      try {
+        timeline.setPointerCapture(event.pointerId);
+      } catch {
+        /* pan still works without capture, it just stops at the edge */
+      }
+      drag = { x: event.clientX, view: { ...this._view } };
+      this._panned = false;
+      timeline.classList.add("dragging");
+    });
+    timeline.addEventListener("pointermove", (event) => {
+      if (!points.has(event.pointerId)) return;
+      points.set(event.pointerId, event.clientX);
+      const width = timeline.getBoundingClientRect().width;
+
+      if (points.size >= 2) {
+        const [a, b] = [...points.values()];
+        const separation = Math.abs(a - b) / width;
+        if (this._pinch) {
+          const { from, to } = this._view;
+          const centre = (from + to) / 2;
+          const span = ((to - from) * this._pinch) / Math.max(separation, 0.01);
+          clampView(centre - span / 2, span);
+        }
+        this._pinch = separation;
+        this._panned = true;
+        return;
+      }
+
+      if (!drag) return;
+      const moved = (event.clientX - drag.x) / width;
+      if (Math.abs(moved) > 0.005) this._panned = true;
+      const span = drag.view.to - drag.view.from;
+      clampView(drag.view.from - moved * span, span);
+    });
+    const release = (event) => {
+      points.delete(event.pointerId);
+      if (points.size === 0) timeline.classList.remove("dragging");
+      if (points.size < 2) this._pinch = null;
+      if (points.size === 0) drag = null;
+    };
+    timeline.addEventListener("pointerup", release);
+    timeline.addEventListener("pointercancel", release);
+
+    card.querySelector("#zoomout").addEventListener("click", () => {
+      this._view = { from: 0, to: 1 };
+      this._paintTimeline();
+    });
+
+    // Step by half a screen, so there is always overlap with what you just saw.
+    const nudge = (direction) => {
+      const span = this._view.to - this._view.from;
+      clampView(this._view.from + direction * span * 0.5, span);
+    };
+    card.querySelector("#panleft").addEventListener("click", () => nudge(-1));
+    card.querySelector("#panright").addEventListener("click", () => nudge(1));
+
+    // Arrow keys once the timeline has focus.
+    timeline.tabIndex = 0;
+    timeline.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft") nudge(-1);
+      else if (event.key === "ArrowRight") nudge(1);
+      else return;
+      event.preventDefault();
+    });
+
+    const step = (direction) => {
+      if (!this._blocks.length) return;
+      const now = this._cursor || this._blocks[0].start;
+      const next =
+        direction > 0
+          ? this._blocks.find((b) => b.start > now)
+          : [...this._blocks].reverse().find((b) => b.start < now);
+      if (next) this._playFrom(next.start);
+    };
+    card.querySelector("#len").addEventListener("change", (event) => {
+      this._clipSeconds = Number(event.target.value);
+      if (this._cursor) this._playFrom(this._cursor);
+    });
+    card.querySelector("#prev").addEventListener("click", () => step(-1));
+    card.querySelector("#next").addEventListener("click", () => step(1));
+    card.querySelector("#download").addEventListener("click", () => this._download());
+  }
+
+  /** Does this subtree have a video that is actually decoding pixels? */
+  _hasLiveVideo(root) {
+    const stack = [root];
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node) continue;
+      if (node.tagName === "VIDEO" && node.videoWidth > 100 && node.readyState >= 2) {
+        return true;
+      }
+      if (node.shadowRoot) stack.push(...node.shadowRoot.children);
+      if (node.children) stack.push(...node.children);
+    }
+    return false;
+  }
+
+  async _renderStage(stage) {
+    if (!stage || !this._selected) return;
+    if (this._mode === "live") return this._renderLive(stage);
+    return this._renderPlayback(stage);
+  }
+
+  /** An error, or a note about what to do next, where the video would be. */
+  _overlay(stage, message) {
+    stage.dataset.url = "";
+    stage.innerHTML = `<div class="overlay">${esc(message)}</div>`;
+  }
+
+  _absolute(url) {
+    return this._hass.hassUrl
+      ? this._hass.hassUrl(url)
+      : new URL(url, window.location.origin).href;
+  }
+
+  /**
+   * Live view through Home Assistant's own camera element, which negotiates
+   * WebRTC via go2rtc: measured in this stage, a decoding frame in ~1.0s
+   * against ~2.9-5.1s for our HLS URL, and it reuses the stream the camera
+   * entity already runs rather than starting a second one.
+   *
+   * The HLS URL is fetched only if that path is missing or stays black.
+   * Asking for it up front -- which is what this did -- started an ffmpeg and
+   * an RTSP session against the NVR on every single live view, held them for
+   * the five minute idle timeout, and then threw the result away unread.
+   */
+  async _renderLive(stage) {
+    const key = `live:${this._selected}`;
+    if (stage.dataset.url === key) return;
+
+    await ensurePlayer();
+    const channel = this._channels.find((c) => c.id === this._selected);
+    const stateObj = channel && this._hass.states[channel.entity_id];
+
+    if (stateObj && customElements.get("ha-camera-stream")) {
+      stage.dataset.url = key;
+      stage.innerHTML = "";
+
+      // ha-camera-stream reads its Home Assistant handles from Lit contexts,
+      // not from a hass property, and must be attached before stateObj is set.
+      const native = document.createElement("ha-camera-stream");
+      stage.appendChild(native);
+      native.stateObj = stateObj;
+      native.muted = this._muted;
+      native.allowExoPlayer = true;
+
+      // Never leave a black stage: if nothing is decoding shortly, fall back
+      // to the HLS path, which is slower but has always worked.
+      const started = Date.now();
+      const watchdog = setInterval(() => {
+        if (!native.isConnected || stage.dataset.url !== key) {
+          clearInterval(watchdog);
+        } else if (this._hasLiveVideo(native)) {
+          clearInterval(watchdog);
+        } else if (Date.now() - started > NATIVE_LIVE_TIMEOUT) {
+          clearInterval(watchdog);
+          native.remove();
+          this._renderHlsLive(stage);
+        }
+      }, 400);
+      return;
+    }
+
+    await this._renderHlsLive(stage);
+  }
+
+  /** The fallback: our own HLS URL, remuxed server-side by ffmpeg. */
+  async _renderHlsLive(stage) {
+    const url = await this._liveUrl().catch(() => null);
+    if (!url) return this._overlay(stage, this._error || "Starting stream\u2026");
+    stage.dataset.url = url;
+    stage.innerHTML = "";
+
+    const absolute = this._absolute(url);
+    if (customElements.get("ha-hls-player")) {
+      const player = document.createElement("ha-hls-player");
+      player.hass = this._hass;
+      player.url = absolute;
+      player.autoPlay = true;
+      player.muted = true;
+      player.playsInline = true;
+      stage.appendChild(player);
+      return;
+    }
+    // Native HLS (Safari / iOS) when the Home Assistant chunk is unavailable.
+    const video = document.createElement("video");
+    video.src = absolute;
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.controls = true;
+    stage.appendChild(video);
+  }
+
+  /**
+   * History is a plain fragmented-MP4 file, so <video> plays it directly with
+   * native seeking and no HLS machinery at all. It is signed rather than sent
+   * with a header because a bare <video src> cannot carry one.
+   */
+  async _renderPlayback(stage) {
+    const url = this._playbackUrl;
+    if (!url) {
+      return this._overlay(
+        stage,
+        this._error || "Pick a moment on the timeline to play"
+      );
+    }
+    if (stage.dataset.url === url) return;
+    stage.dataset.url = url;
+
+    const { path } = await this._hass.callWS({
+      type: "auth/sign_path",
+      path: url,
+      expires: 3600,
+    });
+    stage.innerHTML = "";
+    const video = document.createElement("video");
+    video.src = this._absolute(path);
+    video.autoplay = true;
+    video.muted = true;
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    stage.appendChild(video);
+    // Chrome pauses muted video-only media in a background tab ("paused to
+    // save power"); that rejection is expected and not worth surfacing.
+    video.play().catch(() => {});
+  }
+}
+
+/**
+ * Visual editor. Everything is a dropdown, driven by <ha-form> so the widgets
+ * are Home Assistant's own and stay consistent with the rest of the UI.
+ * The NVR and camera lists are fetched live from the API, so there is nothing
+ * to type and nothing to remember.
+ */
+class HikvisionNvrCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this._devices = [];
+  }
+
+  setConfig(config) {
+    this._config = { columns: 3, default_mode: "live", live_stream: 1, ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first) this._load();
+    else this._render();
+  }
+
+  async _load() {
+    try {
+      const { devices } = await this._hass.callApi("GET", "hikvision_nvr/devices");
+      this._devices = devices;
+    } catch (err) {
+      this._error = errText(err);
+    }
+    this._render();
+  }
+
+  get _device() {
+    return (
+      this._devices.find(
+        (d) => d.id === this._config?.device || d.host === this._config?.device
+      ) || this._devices[0]
+    );
+  }
+
+  _schema() {
+    const device = this._device;
+    const channels = device?.channels || [];
+    return [
+      {
+        name: "device",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: this._devices.map((d) => ({
+              value: d.id,
+              label: `${d.name} (${d.model || d.host})`,
+            })),
+          },
+        },
+      },
+      {
+        name: "channels",
+        selector: {
+          select: {
+            multiple: true,
+            mode: "list",
+            options: channels.map((c) => ({
+              value: String(c.id),
+              label: `${c.id} · ${c.name}${c.online ? "" : " (offline)"}`,
+            })),
+          },
+        },
+      },
+      {
+        name: "default_mode",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "live", label: "Live view" },
+              { value: "playback", label: "History" },
+            ],
+          },
+        },
+      },
+      {
+        name: "live_stream",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: 1, label: "Main stream — full resolution" },
+              { value: 2, label: "Sub stream — lighter, starts faster" },
+            ],
+          },
+        },
+      },
+      {
+        name: "columns",
+        selector: { number: { min: 1, max: 6, mode: "slider" } },
+      },
+    ];
+  }
+
+  _labels(schema) {
+    return {
+      device: "NVR",
+      channels: "Cameras to show",
+      default_mode: "Opens on",
+      live_stream: "Live quality",
+      columns: "Thumbnails per row",
+    }[schema.name];
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    if (!this.querySelector("ha-form")) {
+      this.innerHTML = `<div class="hik-editor" style="padding:8px 0"></div>`;
+      const form = document.createElement("ha-form");
+      form.addEventListener("value-changed", (event) => {
+        const config = { ...this._config, ...event.detail.value };
+        // Selecting a different NVR invalidates the camera picks.
+        if (config.device !== this._config.device) delete config.channels;
+        this._config = config;
+        this.dispatchEvent(
+          new CustomEvent("config-changed", {
+            detail: { config: { type: "custom:hikvision-nvr-card", ...config } },
+            bubbles: true,
+            composed: true,
+          })
+        );
+        this._render();
+      });
+      this.querySelector(".hik-editor").appendChild(form);
+    }
+
+    if (this._error) {
+      this.querySelector(".hik-editor").insertAdjacentHTML(
+        "afterbegin",
+        `<div style="color:var(--error-color);font-size:13px;padding:8px">${esc(
+          this._error
+        )}</div>`
+      );
+      this._error = null;
+    }
+
+    const device = this._device;
+    const form = this.querySelector("ha-form");
+    form.hass = this._hass;
+    form.schema = this._schema();
+    form.computeLabel = (schema) => this._labels(schema);
+    form.data = {
+      ...this._config,
+      device: device?.id ?? this._config.device,
+      // Nothing selected means "all cameras" -- show that as all ticked.
+      channels: (
+        this._config.channels || (device?.channels || []).map((c) => c.id)
+      ).map(String),
+    };
+  }
+}
+
+// The panel imports this module under a different URL than the global
+// add_extra_js_url load, so it can execute twice. Defining twice throws.
+if (!customElements.get("hikvision-nvr-card")) {
+  customElements.define("hikvision-nvr-card", HikvisionNvrCard);
+  customElements.define("hikvision-nvr-card-editor", HikvisionNvrCardEditor);
+  // Alias: `type: custom:hikvision-card` resolves to the same card, so the
+  // shorter name people reach for first does not fail.
+  customElements.define("hikvision-card", class extends HikvisionNvrCard {});
+}
+
+window.customCards = window.customCards || [];
+if (!window.customCards.some((c) => c.type === "hikvision-nvr-card"))
+  window.customCards.push({
+  type: "hikvision-nvr-card",
+  name: "Hikvision",
+  description: "Live view and history playback for a Hikvision NVR",
+  preview: true,
+  documentationURL: "https://github.com/techmarkai/hikvision-nvr-ha",
+});

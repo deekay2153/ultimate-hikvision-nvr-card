@@ -1,0 +1,111 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ultimate NVR card preview</title>
+<!-- Runs the BUILT card (dist/ultimate-nvr-card.js) against a made-up recorder,
+     with nothing in the card's options: everything comes from the "integration".
+     Serve the repo root (python -m http.server) and open /preview/.
+     ?mode=playback opens History; ?narrow=1 for a phone-width box. -->
+<style>
+  :root {
+    --primary-color: #03a9f4; --text-primary-color: #fff;
+    --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
+    --card-background-color: #1c1c1c; --secondary-background-color: #282828;
+    --divider-color: rgba(225,225,225,.12); --error-color: #db4437; --warning-color: #ffa600;
+  }
+  body { margin: 0; background: #111; color: var(--primary-text-color); font: 14px/1.4 Roboto, "Segoe UI", sans-serif; }
+  ha-card { display: block; background: var(--card-background-color); border-radius: 12px; border: 1px solid var(--divider-color); }
+</style>
+<body>
+<div id="wrap"></div>
+<script type="module">
+const scene = (hue, label) =>
+  "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="hsl(${hue},30%,40%)"/>` +
+    `<rect x="${40 + hue % 90}" y="62" width="110" height="70" fill="rgba(0,0,0,.28)"/>` +
+    `<text x="8" y="16" font-family="sans-serif" font-size="9" fill="#fff" opacity=".8">${label}</text></svg>`);
+window.hues = {};
+window.cardConfigs = [];
+// Stand-in for Advanced Camera Card: a moving picture, so "is it playing" can be checked.
+class FakeCam extends HTMLElement {
+  connectedCallback() {
+    window.cardConfigs.push(this.cfg);
+    const ent = this.cfg.cameras[0].camera_entity;
+    const cv = document.createElement("canvas"); cv.width = 320; cv.height = 180;
+    const cx = cv.getContext("2d"); let n = 0;
+    this._iv = setInterval(() => { cx.fillStyle = `hsl(${(window.hues[ent] || 0) + (n % 20)},45%,45%)`; cx.fillRect(0, 0, 320, 180); cx.fillStyle = "#fff"; cx.fillRect((n * 6) % 320, 80, 30, 20); n += 1; }, 100);
+    const v = document.createElement("video"); v.muted = true; v.autoplay = true; v.playsInline = true;
+    v.style.cssText = "width:100%;height:100%;object-fit:cover;display:block";
+    v.srcObject = cv.captureStream(10); this.attachShadow({ mode: "open" }).appendChild(v); v.play().catch(() => {});
+    this.style.cssText += "display:block;width:100%;height:100%";
+  }
+  disconnectedCallback() { clearInterval(this._iv); }
+}
+customElements.define("advanced-camera-card", FakeCam);
+customElements.define("ha-icon", class extends HTMLElement {
+  connectedCallback() { this.style.cssText += "display:inline-block;width:18px;height:18px;border-radius:4px;background:rgba(255,255,255,.75)"; }
+});
+customElements.define("ha-hls-player", class extends HTMLElement {});
+customElements.define("ha-camera-stream", class extends HTMLElement {});
+window.loadCardHelpers = async () => ({
+  createCardElement: (cfg) => { const el = document.createElement("advanced-camera-card"); el.cfg = cfg; return el; },
+});
+await import(`../dist/ultimate-nvr-card.js?t=${Date.now()}`);
+
+// A made-up recorder: 6 cameras, channel 1 a PTZ, channel 4 without a camera entity.
+const names = ["Driveway PTZ", "Street", "Backyard", "Garage", "Side", "Porch"];
+const channels = names.map((name, i) => ({
+  id: i + 1, name, online: true, has_audio: i % 2 === 0, ptz: i === 0, streams: [1, 2],
+  entity_id: i === 3 ? null : `camera.cam_${i + 1}`,
+}));
+const states = {}, entities = {};
+channels.forEach((c) => {
+  if (!c.entity_id) return;
+  window.hues[c.entity_id] = (c.id * 53) % 360;
+  states[c.entity_id] = { attributes: { entity_picture: scene(window.hues[c.entity_id], "") } };
+  entities[c.entity_id] = { entity_id: c.entity_id, device_id: `dev${c.id}` };
+  // Each camera device: a motion sensor (wanted) and a connectivity sensor (not motion).
+  const motion = `binary_sensor.cam_${c.id}_motion`, online = `binary_sensor.cam_${c.id}_online`;
+  states[motion] = { state: c.id === 2 ? "on" : "off", attributes: { device_class: "motion" } };
+  states[online] = { state: "on", attributes: { device_class: "connectivity" } };
+  entities[motion] = { entity_id: motion, device_id: `dev${c.id}` };
+  entities[online] = { entity_id: online, device_id: `dev${c.id}` };
+});
+const today = new Date(); today.setHours(0, 0, 0, 0);
+const at = (h, m) => new Date(today.getTime() + (h * 60 + m) * 60000).toISOString();
+const detections = [6, 7, 7, 8, 9, 10].map((h, i) => ({ time: at(h, i * 7), kind: i % 3 ? "person" : "vehicle", picture: `101/p${i}/1` }));
+window.calls = [];
+const hass = {
+  connected: true, states, entities, devices: {},
+  user: { is_admin: true },
+  callApi: async (method, path) => {
+    window.calls.push(`api ${path}`);
+    if (path.endsWith("/devices")) return { devices: [{ id: "rec1", name: "Recorder", host: "x", channels }] };
+    if (path.endsWith("/recording")) return { channels: { 1: true, 3: true } };
+    if (path.includes("/timeline")) return { blocks: [{ start: at(6, 0), end: at(6, 30), event_types: [] }] };
+    if (path.includes("/detections")) return { supported: true, detections };
+    return {};
+  },
+  callWS: async (msg) => {
+    if (msg.type === "history/history_during_period") return {};
+    if (msg.type === "media_source/browse_media") throw new Error("none");
+    const m = /\/(\d+)\/snapshot$/.exec(msg.path || "");
+    return { path: scene(m ? (Number(m[1]) * 53) % 360 : 0, "") };
+  },
+  callService: async (domain, service, data) => {
+    window.calls.push(`service ${domain}.${service} ${JSON.stringify(data)}`);
+    if (domain === "hikvision_nvr" && service === "ptz_presets") {
+      return { response: { presets: [{ id: 3, name: "Gate" }, { id: 7, name: "Letterbox" }] } };
+    }
+    return {};
+  },
+};
+const el = document.createElement("ultimate-nvr-card");
+const q = new URLSearchParams(location.search);
+el.setConfig({ type: "custom:ultimate-nvr-card", ...(q.get("mode") ? { default_mode: q.get("mode") } : {}) });
+el.hass = hass;
+if (q.get("narrow")) document.getElementById("wrap").style.maxWidth = "390px";
+document.getElementById("wrap").appendChild(el);
+window.el = el;
+</script>
+</body>
