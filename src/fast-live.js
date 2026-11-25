@@ -668,7 +668,12 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       // No "NVR channel 6 / 3200x1800" bar popping up over the picture.
       status_bar: { style: "none" },
       performance: { features: { animated_progress_indicator: false } },
-      dimensions: { aspect_ratio: "16:9" },
+      // On a wall that fills the screen the big picture's box is not 16:9:
+      // let the player take the box and show the whole picture inside it.
+      dimensions: !tile && isWall(host) && host._config.fill !== false &&
+        !window.matchMedia("(max-width: 899px), (max-height: 500px)").matches
+        ? { aspect_ratio_mode: "unconstrained" }
+        : { aspect_ratio: "16:9" },
       views: ["live"],
       cameras_global: { dimensions: { layout: { fit: "contain" } } },
     });
@@ -1102,7 +1107,18 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
   proto._renderLive = async function (stage) {
     const entry = entryFor(this, this._selected);
     if (!entry || !customElements.get("advanced-camera-card")) {
-      return originalLive.call(this, stage);
+      const result = await originalLive.call(this, stage);
+      try {
+        if (isWall(this) && stage.isConnected && this._mode === "live") {
+          renderStatus(this, stage);
+          renderPtz(this, stage);
+          hook("ptz", this, stage);
+          wallLive(this);
+        }
+      } catch (err) {
+        console.warn("nvr fast-live: controls on the plain live view failed", err);
+      }
+      return result;
     }
     const key = keyFor(this._selected, entry);
     if (stage.dataset.url === key) return;
@@ -1532,7 +1548,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     try {
       for (const channel of host._channels) {
         const entry = entryFor(host, channel.id);
-        if (!entry || entry.thumb) continue; // gate / door stations are not recorded
+        if (entry && entry.thumb) continue; // gate / door stations are not recorded
         try {
           const data = await host._api(
             `${host._device.id}/${channel.id}/detections` +
@@ -2765,7 +2781,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     const ch = host._selected;
     paintLiveRuler(host);
     const entry = entryFor(host, ch);
-    if (!entry || entry.thumb) {
+    if (entry && entry.thumb) {
       host._liveBlocks = { ch, blocks: [] }; // gate / door stations are not recorded
       return;
     }

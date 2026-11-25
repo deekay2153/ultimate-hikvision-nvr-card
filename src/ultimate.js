@@ -82,6 +82,14 @@
         };
       }
       host._config = next;
+      // Slots with no camera (offline) are left off unless asked for.
+      if (!config.channels && config.show_offline !== true && Array.isArray(host._channels)) {
+        const online = host._channels.filter((channel) => channel.online !== false);
+        if (online.length) {
+          host._channels = online;
+          if (!online.some((channel) => channel.id === host._selected)) host._selected = online[0].id;
+        }
+      }
       if (next.ptz && next.ptz.presets === "auto") loadPresets(host);
     };
 

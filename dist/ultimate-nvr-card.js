@@ -2463,7 +2463,12 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       // No "NVR channel 6 / 3200x1800" bar popping up over the picture.
       status_bar: { style: "none" },
       performance: { features: { animated_progress_indicator: false } },
-      dimensions: { aspect_ratio: "16:9" },
+      // On a wall that fills the screen the big picture's box is not 16:9:
+      // let the player take the box and show the whole picture inside it.
+      dimensions: !tile && isWall(host) && host._config.fill !== false &&
+        !window.matchMedia("(max-width: 899px), (max-height: 500px)").matches
+        ? { aspect_ratio_mode: "unconstrained" }
+        : { aspect_ratio: "16:9" },
       views: ["live"],
       cameras_global: { dimensions: { layout: { fit: "contain" } } },
     });
@@ -2897,7 +2902,18 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
   proto._renderLive = async function (stage) {
     const entry = entryFor(this, this._selected);
     if (!entry || !customElements.get("advanced-camera-card")) {
-      return originalLive.call(this, stage);
+      const result = await originalLive.call(this, stage);
+      try {
+        if (isWall(this) && stage.isConnected && this._mode === "live") {
+          renderStatus(this, stage);
+          renderPtz(this, stage);
+          hook("ptz", this, stage);
+          wallLive(this);
+        }
+      } catch (err) {
+        console.warn("nvr fast-live: controls on the plain live view failed", err);
+      }
+      return result;
     }
     const key = keyFor(this._selected, entry);
     if (stage.dataset.url === key) return;
@@ -3327,7 +3343,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     try {
       for (const channel of host._channels) {
         const entry = entryFor(host, channel.id);
-        if (!entry || entry.thumb) continue; // gate / door stations are not recorded
+        if (entry && entry.thumb) continue; // gate / door stations are not recorded
         try {
           const data = await host._api(
             `${host._device.id}/${channel.id}/detections` +
@@ -4560,7 +4576,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     const ch = host._selected;
     paintLiveRuler(host);
     const entry = entryFor(host, ch);
-    if (!entry || entry.thumb) {
+    if (entry && entry.thumb) {
       host._liveBlocks = { ch, blocks: [] }; // gate / door stations are not recorded
       return;
     }
@@ -4937,6 +4953,16 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       .tile.fl-recording > .flx-rec { display: block; }
       .tile.fl-recording:has(> .flx-rec)::after { display: none; }
 
+      /* Fill the screen (wide screens): the wall is exactly as tall as the room
+         under the page header, and the camera rows share that height, so there
+         is never a gap at the bottom. Tiles and the big picture let go of 16:9;
+         pictures are cropped to fill a tile, the big picture is shown whole. */
+      :host([wall][flx-fill]) ha-card { height: var(--flx-fill-h); }
+      :host([wall][flx-fill]) .fl-main { grid-template-rows: var(--flx-rows); align-content: stretch; }
+      :host([wall][flx-fill]) .fl-main > .stage,
+      :host([wall][flx-fill]) .fl-main .tile,
+      :host([wall][flx-fill]) .fl-main .fl-sum { aspect-ratio: auto; height: auto; min-height: 0; }
+      :host([wall][flx-fill]) .fl-main > .stage { overflow: hidden; }
       /* ---- polish: tiles ---------------------------------------------------
          The name sits on a soft fade at the foot of the picture instead of a
          box laid over it; counts and REC are small frosted chips; a tile
@@ -5169,6 +5195,46 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         else query.addListener(host._flxNarrow);
       }
       window.addEventListener("resize", host._flxNarrow);
+    };
+    // ---- fill the screen -------------------------------------------------------------
+    const fillScreen = (host) => {
+      try {
+        const root = host.shadowRoot;
+        const main = root && root.querySelector(".fl-main");
+        const stage = root && root.querySelector(".fl-main > .stage");
+        const wide = !NARROW.matches && !SHORT.matches && !(stage && stage.classList.contains("fl-full"));
+        if (!main || !wide || (host._config && host._config.fill === false)) {
+          host.removeAttribute("flx-fill");
+          return;
+        }
+        const top = host.getBoundingClientRect().top;
+        if (top < 0) return; // scrolled: keep what we had
+        const height = Math.max(420, Math.floor(window.innerHeight - top - 8));
+        // Rows of cameras: the big picture takes 3 x 3 cells of the 5 columns.
+        let cells = 9;
+        main.querySelectorAll(".tile, .fl-sum").forEach((el) => {
+          if (getComputedStyle(el).display === "none") return;
+          const span = /span (\d+)/.exec(el.style.gridColumn || "");
+          cells += span ? Number(span[1]) : 1;
+        });
+        const columns = getComputedStyle(main).gridTemplateColumns.split(" ").length || 5;
+        const rows = Math.max(3, Math.ceil(cells / columns));
+        host.style.setProperty("--flx-fill-h", `${height}px`);
+        host.style.setProperty("--flx-rows", `auto repeat(${rows}, minmax(0, 1fr))`);
+        host.setAttribute("flx-fill", "");
+      } catch (err) {
+        console.warn("nvr wall: fill the screen failed", err);
+      }
+    };
+    const watchFill = (host) => {
+      if (host._flxFill) return;
+      host._flxFill = () => fillScreen(host);
+      window.addEventListener("resize", host._flxFill);
+    };
+    const unwatchFill = (host) => {
+      if (!host._flxFill) return;
+      window.removeEventListener("resize", host._flxFill);
+      host._flxFill = null;
     };
     const unwatchNarrow = (host) => {
       if (!host._flxNarrow) return;
@@ -5685,10 +5751,11 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         const live = host._mode === "live";
         const now = Date.now();
         const tags = (host._flxTags = host._flxTags || {});
-        const all = (host._config && host._config.fast_live) || {};
-        for (const [key, entry] of Object.entries(all)) {
-          const ch = Number(key);
-          if (!entry || entry.thumb) continue; // gate / door stations are not recorded
+        // Every camera on the card, whether or not it has a live player entry.
+        for (const channel of host._channels || []) {
+          const ch = Number(channel.id);
+          const entry = W.entryFor(host, ch);
+          if (entry && entry.thumb) continue; // gate / door stations are not recorded
           const tag = (tags[ch] = tags[ch] || {});
           const recording = live && !!(host._recording && host._recording[ch]);
           if (recording) {
@@ -5770,6 +5837,9 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       wireHaptics(host);
       runUnstick(host);
       watchNarrow(host);
+      watchFill(host);
+      fillScreen(host);
+      setTimeout(() => fillScreen(host), 300); // after the page header has settled
       if (host._flxClock) paintClock(host);
       else runClock(host);
       runTags(host);
@@ -5790,6 +5860,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
             clearInterval(this._flxTagTimer);
             this._flxTagTimer = null;
             unwatchNarrow(this);
+            unwatchFill(this);
             if (this._flxObs) {
               this._flxObs.disconnect();
               this._flxObs = null;
@@ -5936,6 +6007,14 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         };
       }
       host._config = next;
+      // Slots with no camera (offline) are left off unless asked for.
+      if (!config.channels && config.show_offline !== true && Array.isArray(host._channels)) {
+        const online = host._channels.filter((channel) => channel.online !== false);
+        if (online.length) {
+          host._channels = online;
+          if (!online.some((channel) => channel.id === host._selected)) host._selected = online[0].id;
+        }
+      }
       if (next.ptz && next.ptz.presets === "auto") loadPresets(host);
     };
 
