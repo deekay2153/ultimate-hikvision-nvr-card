@@ -54,11 +54,14 @@ built for Hikvision.
 
 ## Install
 
-1. Install the integration and add your recorder (see its README).
-2. HACS → ⋮ → **Custom repositories** → add
+1. Install the [integration](https://github.com/deekay2153/ultimate-hikvision-nvr)
+   and add your recorder (see its README).
+2. In HACS, install **Advanced Camera Card** (it is in the default list). It
+   plays the live video.
+3. HACS → ⋮ → **Custom repositories** → add
    `https://github.com/deekay2153/ultimate-hikvision-nvr-card`, category **Dashboard**,
    then install **Ultimate Hikvision NVR card**.
-3. Add the card. That is all it needs:
+4. Add the card. That is all it needs:
 
 ```yaml
 type: custom:ultimate-nvr-card
