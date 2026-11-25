@@ -260,6 +260,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         cursor: pointer; transition: background .15s;
       }
       .flx-ev-ptz svg { width: 12px; height: 12px; fill: currentColor; }
+      .flx-ev-ptz::before { content: ""; position: absolute; inset: -12px -8px -12px -10px; }
       .flx-ev-ptz:hover, .flx-ev-ptz:focus-visible { background: var(--fl-accent, #3b82f6); outline: none; }
       /* 6. Layout switch: Focus / Grid / Single, beside Live / History. */
       .flx-lm { margin-right: 8px; }
@@ -790,7 +791,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           haptic("light");
           W.goHistory(host, link.channel, time - 5000);
         };
-        pill.addEventListener("click", open);
+        pill._flxOpen = open;
         pill.addEventListener("keydown", (event) => {
           if (event.key === "Enter" || event.key === " ") open(event);
         });
@@ -803,6 +804,24 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       if (!list._flxPtzWatch) {
         list._flxPtzWatch = new MutationObserver(() => decorateSide(host));
         list._flxPtzWatch.observe(list, { childList: true });
+        // Decide by where the tap landed, not by the click's target: some
+        // browsers hand a click on a button's child to the button itself.
+        // The pill's area includes its invisible margin (the ::before).
+        list.addEventListener(
+          "click",
+          (event) => {
+            const pill = [...list.querySelectorAll(".flx-ev-ptz")].find((p) => {
+              const box = p.getBoundingClientRect();
+              return (
+                event.clientX >= box.left - 10 && event.clientX <= box.right + 8 &&
+                event.clientY >= box.top - 12 && event.clientY <= box.bottom + 12 &&
+                p.closest(".fl-ev").contains(event.target)
+              );
+            });
+            if (pill && pill._flxOpen) pill._flxOpen(event);
+          },
+          true
+        );
       }
       decorateSide(host);
     };
