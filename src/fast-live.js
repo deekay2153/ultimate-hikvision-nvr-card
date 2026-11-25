@@ -2195,6 +2195,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     const option = host._config && host._config.live_tiles;
     if (!option || host._mode !== "live" || document.hidden || !host.isConnected) return false;
     if (!customElements.get("advanced-camera-card")) return false;
+    if (host.getAttribute("lm") === "single") return false; // wall layout "Single": the tiles are hidden
     return option === "all" || window.matchMedia("(min-width: 768px) and (min-height: 600px)").matches;
   };
   const syncTiles = (host) => {
@@ -3000,7 +3001,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     hook("ptz", host, stage);
   };
   const W = (proto.__flWall = {
-    isWall, entryFor, goHistory, clock, isoDay, paintSide, buildCard, iconSvg, refreshPtz,
+    isWall, entryFor, goHistory, clock, isoDay, paintSide, buildCard, iconSvg, refreshPtz, syncTiles,
   });
   function hook(name, ...args) {
     try {

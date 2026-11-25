@@ -4001,6 +4001,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     const option = host._config && host._config.live_tiles;
     if (!option || host._mode !== "live" || document.hidden || !host.isConnected) return false;
     if (!customElements.get("advanced-camera-card")) return false;
+    if (host.getAttribute("lm") === "single") return false; // wall layout "Single": the tiles are hidden
     return option === "all" || window.matchMedia("(min-width: 768px) and (min-height: 600px)").matches;
   };
   const syncTiles = (host) => {
@@ -4806,7 +4807,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     hook("ptz", host, stage);
   };
   const W = (proto.__flWall = {
-    isWall, entryFor, goHistory, clock, isoDay, paintSide, buildCard, iconSvg, refreshPtz,
+    isWall, entryFor, goHistory, clock, isoDay, paintSide, buildCard, iconSvg, refreshPtz, syncTiles,
   });
   function hook(name, ...args) {
     try {
@@ -4857,6 +4858,9 @@ const customElements = (() => {
  *      started.
  *   5. PERSON / VEHICLE tags on a camera's tile (and on the big picture)
  *      while the recorder is recording an event on it.
+ *   6. A layout switch in the header (wide screens): Focus (the big picture
+ *      and the tiles), Grid (every camera the same size) and Single (one
+ *      camera). Remembered per browser; card option `view:` sets the default.
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -5006,6 +5010,22 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       @keyframes flx-sub-pulse { 50% { opacity: .35; } }
       @media (prefers-reduced-motion: reduce) { .flx-sub i.rec { animation: none; } }
       @media (max-height: 500px) { :host([wall]) .flx-sub { display: none; } :host([wall]) .flx-chip { width: 28px; height: 28px; } }
+      /* 6. Layout switch: Focus / Grid / Single, beside Live / History. */
+      .flx-lm { margin-right: 8px; }
+      .flx-lm button { width: 36px; padding: 0 !important; display: grid; place-items: center; }
+      .flx-lm svg { width: 17px; height: 17px; fill: currentColor; display: block; }
+      @media (max-width: 899px), (max-height: 500px) { .flx-lm { display: none !important; } }
+      @media (min-width: 900px) and (min-height: 501px) {
+        :host([wall][lm="single"]) .fl-main .tile,
+        :host([wall][lm="single"]) .fl-main .fl-sum { display: none !important; }
+        :host([wall][lm="single"]) .fl-main > .stage { grid-column: 1 / -1; }
+        :host([wall][lm="grid"]) .fl-main > .stage { grid-column: span 1; grid-row: span 1; }
+        :host([wall][lm="grid"]) .fl-main .tile.active { display: none !important; }
+        /* The joystick sets its own display, so hide it this way instead. */
+        :host([wall][lm="grid"]) .stage > .fl-ptz,
+        :host([wall][lm="grid"]) .stage > .fl-presets,
+        :host([wall][lm="grid"]) .flx-ptzrow { visibility: hidden !important; pointer-events: none !important; }
+      }
       /* The tile's REC marker as a real button, drawn exactly as before. */
       .flx-rec {
         display: none; position: absolute; left: 7px; top: 7px; height: 20px; box-sizing: border-box;
@@ -5266,6 +5286,88 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       }
       window.addEventListener("resize", host._flxNarrow);
     };
+    // ---- 6. layout switch -------------------------------------------------------------
+    const LAYOUT_KEY = "ultimate-nvr-layout";
+    const LAYOUTS = [
+      ["focus", "Focus: big picture and tiles", "M3 4h11v11H3zM16 4h5v5h-5zM16 11h5v4h-5zM3 17h5v3H3zM10 17h5v3h-5zM17 17h4v3h-4z"],
+      ["grid", "Grid: every camera the same size", "M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z"],
+      ["single", "Single: one camera", "M3 5h18v14H3z"],
+    ];
+    const layoutOf = (host) => {
+      if (NARROW.matches || SHORT.matches) return "focus"; // phones keep their own layout
+      if (!host._flxLayout) {
+        let saved = null;
+        try {
+          saved = window.localStorage.getItem(LAYOUT_KEY);
+        } catch (_) {
+          /* private window: use the default */
+        }
+        const wanted = (host._config && host._config.view) || "focus";
+        host._flxLayout = LAYOUTS.some(([id]) => id === saved) ? saved : wanted;
+      }
+      return host._flxLayout;
+    };
+    const paintLayoutSwitch = (host) => {
+      const head = host.shadowRoot && host.shadowRoot.querySelector(".fl-main > .head");
+      if (!head) return;
+      let box = head.querySelector(".flx-lm");
+      if (!box) {
+        box = document.createElement("div");
+        box.className = "fl-seg flx-lm";
+        box.setAttribute("role", "group");
+        box.setAttribute("aria-label", "Wall layout");
+        box.innerHTML = LAYOUTS.map(
+          ([id, label, icon]) =>
+            `<button type="button" data-lm="${id}" title="${label}" aria-label="${label}">` +
+            `<svg viewBox="0 0 24 24"><path d="${icon}"/></svg></button>`
+        ).join("");
+        box.addEventListener("click", (event) => {
+          const button = event.target.closest("button[data-lm]");
+          if (button) setLayout(host, button.dataset.lm);
+        });
+        head.insertBefore(box, head.querySelector(".modes") || null);
+      }
+      const current = host.getAttribute("lm") || "focus";
+      box.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lm === current)));
+    };
+    const setLayout = (host, layout) => {
+      if (!LAYOUTS.some(([id]) => id === layout)) return;
+      host._flxLayout = layout;
+      try {
+        window.localStorage.setItem(LAYOUT_KEY, layout);
+      } catch (_) {
+        /* not remembered in a private window */
+      }
+      const glide = captureGlide(host);
+      host.setAttribute("lm", layout);
+      paintLayoutSwitch(host);
+      // Measure from the natural layout, not the previous layout's sizes.
+      host.removeAttribute("flx-fill");
+      fillScreen(host);
+      glide();
+      requestAnimationFrame(() => fillScreen(host));
+      if (W.syncTiles) W.syncTiles(host); // Single pauses the hidden tiles, the others bring them back
+      haptic("light");
+    };
+    const applyLayout = (host) => {
+      const layout = layoutOf(host);
+      if (host.getAttribute("lm") !== layout) host.setAttribute("lm", layout);
+      paintLayoutSwitch(host);
+      if (!host._flxGridTap) {
+        // In Grid, tapping a camera opens it in Focus (the card picks it as usual).
+        host._flxGridTap = true;
+        host.shadowRoot.addEventListener(
+          "click",
+          (event) => {
+            if (host.getAttribute("lm") !== "grid" || NARROW.matches || SHORT.matches) return;
+            if (!event.target.closest || !event.target.closest(".tile")) return;
+            setTimeout(() => setLayout(host, "focus"), 0);
+          },
+          true
+        );
+      }
+    };
+
     // ---- fill the screen -------------------------------------------------------------
     // Wide screens only (not phones, not a phone on its side, not full screen),
     // and not with `fill: false`. Never squashes: when even the most compact
@@ -5296,8 +5398,14 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       if (tiles >= room - beside) return { span: room - tiles, rows: 1 }; // one short last row
       return null;
     };
-    const placeSum = (main, tiles, columns) => {
-      const place = sumFor(columns, tiles) || { span: 0, rows: 1 };
+    const placeSum = (main, tiles, columns, layout = "focus") => {
+      // Grid: the big picture is one cell like the rest, so the leftover is
+      // simply what the last row is short of.
+      const place = layout === "grid"
+        ? { span: (columns - ((tiles + 1) % columns)) % columns, rows: 1 }
+        : layout === "single"
+          ? { span: 0, rows: 1 }
+          : sumFor(columns, tiles) || { span: 0, rows: 1 };
       const left = place.span;
       let sum = main.querySelector(".fl-sum");
       if (!sum && left) {
@@ -5319,8 +5427,9 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         const tiles = main
           ? [...main.querySelectorAll(".tile")].filter((el) => getComputedStyle(el).display !== "none").length
           : 0;
+        const layout = layoutOf(host);
         const giveUp = () => {
-          if (host.hasAttribute("flx-fill")) placeSum(main, tiles, 5);
+          if (host.hasAttribute("flx-fill") || layout !== "focus") placeSum(main, tiles, 5, layout);
           host.removeAttribute("flx-fill");
         };
         const wide = !NARROW.matches && !SHORT.matches;
@@ -5339,6 +5448,37 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           fixed += el.getBoundingClientRect().height + GAP;
         }
         const width = main.clientWidth - 8; // .fl-main side padding
+        if (layout === "single") {
+          // One camera: the big picture takes the whole width and height.
+          host.style.setProperty("--flx-cols", "5");
+          host.style.setProperty("--flx-fill-h", `${room}px`);
+          host.style.setProperty("--flx-rows", "auto repeat(3, minmax(0, 1fr))");
+          placeSum(main, tiles, 5, layout);
+          host.setAttribute("flx-fill", "");
+          return;
+        }
+        if (layout === "grid") {
+          // Every camera one cell (the big picture is the selected one's cell).
+          const cells = tiles + 1;
+          let pick = null;
+          for (const columns of [6, 5, 4, 3, 2]) {
+            const cell = (width - (columns - 1) * GAP) / columns;
+            if (cell < 170) continue;
+            const rows = Math.ceil(cells / columns);
+            const natural = fixed + rows * ((cell * 9) / 16) + (rows - 1) * GAP;
+            if (natural <= room && (!pick || natural > pick.natural)) pick = { columns, rows, natural };
+          }
+          if (!pick || room < 360) {
+            giveUp();
+            return;
+          }
+          host.style.setProperty("--flx-cols", String(pick.columns));
+          host.style.setProperty("--flx-fill-h", `${room}px`);
+          host.style.setProperty("--flx-rows", `auto repeat(${pick.rows}, minmax(0, 1fr))`);
+          placeSum(main, tiles, pick.columns, layout);
+          host.setAttribute("flx-fill", "");
+          return;
+        }
         let best = null;
         for (const columns of FILL_COLUMNS) {
           if (!sumFor(columns, tiles)) continue; // this layout would leave a hole
@@ -6033,6 +6173,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       runUnstick(host);
       watchNarrow(host);
       watchFill(host);
+      applyLayout(host);
       fillScreen(host);
       if (!host._flxFillSettle) {
         // Once, after the page header has settled on first arrival.
