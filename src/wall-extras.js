@@ -26,6 +26,9 @@
  *   6. A layout switch in the header (wide screens): Focus (the big picture
  *      and the tiles), Grid (every camera the same size) and Single (one
  *      camera). Remembered per browser; card option `view:` sets the default.
+ *   7. The detections bar slides away and back (wide screens): swipe it to
+ *      the right, or tap its handle; swipe in from the right edge, or tap the
+ *      handle, to bring it back. Remembered per browser.
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -175,6 +178,31 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       @keyframes flx-sub-pulse { 50% { opacity: .35; } }
       @media (prefers-reduced-motion: reduce) { .flx-sub i.rec { animation: none; } }
       @media (max-height: 500px) { :host([wall]) .flx-sub { display: none; } :host([wall]) .flx-chip { width: 28px; height: 28px; } }
+      /* 7. The detections bar slides away (wide screens). */
+      @media (min-width: 900px) and (min-height: 501px) {
+        :host([wall]) ha-card { position: relative; }
+        :host([wall]) .fl-side {
+          display: block !important; overflow: hidden; touch-action: pan-y;
+          transition: width .28s cubic-bezier(.2, .8, .2, 1);
+        }
+        :host([wall][side-off]) .fl-side { width: 0; }
+        :host([wall]) .fl-side > * { width: 250px; }
+        .flx-side-tab {
+          position: absolute; top: 50%; right: 250px; z-index: 6; transform: translateY(-50%);
+          width: 18px; height: 64px; padding: 0; border: 0; border-radius: 10px 0 0 10px; cursor: pointer;
+          display: grid; place-items: center; color: rgba(255,255,255,.8);
+          background: rgba(20,23,31,.9); box-shadow: -4px 0 14px -6px rgba(0,0,0,.6);
+          transition: right .28s cubic-bezier(.2, .8, .2, 1), background .2s; touch-action: none;
+        }
+        .flx-side-tab:hover { background: rgba(32,36,47,.96); }
+        .flx-side-tab svg { width: 14px; height: 14px; fill: currentColor; transition: transform .28s; }
+        :host([wall][side-off]) .flx-side-tab { right: 0; }
+        :host([wall][side-off]) .flx-side-tab svg { transform: rotate(180deg); }
+        @media (prefers-reduced-motion: reduce) {
+          :host([wall]) .fl-side, .flx-side-tab, .flx-side-tab svg { transition: none; }
+        }
+      }
+      @media (max-width: 899px), (max-height: 500px) { .flx-side-tab { display: none; } }
       /* 6. Layout switch: Focus / Grid / Single, beside Live / History. */
       .flx-lm { margin-right: 8px; }
       .flx-lm button { width: 36px; padding: 0 !important; display: grid; place-items: center; }
@@ -458,6 +486,95 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       }
       window.addEventListener("resize", host._flxNarrow);
     };
+    // ---- 7. detections bar: swipe / handle --------------------------------------------
+    const SIDE_KEY = "ultimate-nvr-side";
+    const wideScreen = () => !NARROW.matches && !SHORT.matches;
+    const setSide = (host, open, remember = true) => {
+      host._sideOff = !open;
+      host.toggleAttribute("side-off", !open);
+      if (remember) {
+        try {
+          window.localStorage.setItem(SIDE_KEY, open ? "open" : "closed");
+        } catch (_) {
+          /* not remembered in a private window */
+        }
+      }
+      const tab = host.shadowRoot && host.shadowRoot.querySelector(".flx-side-tab");
+      if (tab) tab.setAttribute("aria-label", open ? "Hide detections" : "Show detections");
+      haptic("light");
+      // The wall gets wider or narrower as the bar slides: fit it again after.
+      clearTimeout(host._flxSideFit);
+      host._flxSideFit = setTimeout(() => fillScreen(host), 320);
+    };
+    const swipe = (el, onSwipe, startOk = () => true) => {
+      let start = null;
+      el.addEventListener("pointerdown", (event) => {
+        start = event.isPrimary && startOk(event) ? { x: event.clientX, y: event.clientY, t: Date.now() } : null;
+      });
+      el.addEventListener("pointerup", (event) => {
+        if (!start) return;
+        const dx = event.clientX - start.x;
+        const dy = event.clientY - start.y;
+        const quick = Date.now() - start.t < 700;
+        start = null;
+        if (quick && Math.abs(dx) > 50 && Math.abs(dy) < 40) onSwipe(dx > 0 ? "right" : "left", event);
+      });
+      el.addEventListener("pointercancel", () => {
+        start = null;
+      });
+    };
+    const ensureSideBar = (host) => {
+      const root = host.shadowRoot;
+      const card = root && root.querySelector("ha-card");
+      const side = root && root.querySelector(".fl-side");
+      if (!card || !side) return;
+      if (!host._flxSideInit) {
+        host._flxSideInit = true;
+        let saved = null;
+        try {
+          saved = window.localStorage.getItem(SIDE_KEY);
+        } catch (_) {
+          /* private window */
+        }
+        if (saved === "closed") {
+          host._sideOff = true;
+          host.toggleAttribute("side-off", true);
+        }
+      }
+      if (!card.querySelector(":scope > .flx-side-tab")) {
+        const tab = document.createElement("button");
+        tab.type = "button";
+        tab.className = "flx-side-tab";
+        tab.setAttribute("aria-label", host._sideOff ? "Show detections" : "Hide detections");
+        tab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8.6 16.6 13.2 12 8.6 7.4 10 6l6 6-6 6z"/></svg>';
+        tab.addEventListener("click", (event) => {
+          event.stopPropagation();
+          setSide(host, !!host._sideOff);
+        });
+        // Drag the handle itself: left opens, right closes.
+        swipe(tab, (direction) => setSide(host, direction === "left"));
+        card.appendChild(tab);
+      }
+      if (!side._flxSwipe) {
+        side._flxSwipe = true;
+        // Swipe the bar to the right to tuck it away.
+        swipe(side, (direction) => {
+          if (wideScreen() && direction === "right" && !host._sideOff) setSide(host, false);
+        });
+      }
+      if (!card._flxEdgeSwipe) {
+        card._flxEdgeSwipe = true;
+        // With the bar away: swipe in from the right edge to bring it back.
+        swipe(
+          card,
+          (direction) => {
+            if (wideScreen() && direction === "left" && host._sideOff) setSide(host, true);
+          },
+          (event) => host._sideOff && card.getBoundingClientRect().right - event.clientX < 40
+        );
+      }
+    };
+
     // ---- 6. layout switch -------------------------------------------------------------
     const LAYOUT_KEY = "ultimate-nvr-layout";
     const LAYOUTS = [
@@ -1386,6 +1503,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       runUnstick(host);
       watchNarrow(host);
       watchFill(host);
+      ensureSideBar(host);
       applyLayout(host);
       fillScreen(host);
       if (!host._flxFillSettle) {
