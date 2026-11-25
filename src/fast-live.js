@@ -2779,7 +2779,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         dayEnd: end.getTime(),
         view: { from: 0, to: 1 },
         blocks: mine ? host._liveBlocks.blocks : [],
-        detections: [host._selected, ...(((host._config || {}).ptz || {}).channel === host._selected ? host._config.ptz.linked || [] : [])]
+        detections: [host._selected, ...(Number(((host._config || {}).ptz || {}).channel) === Number(host._selected) ? host._config.ptz.linked || [] : [])]
           .flatMap((c) => (host._detLists || {})[c] || []), // a PTZ shows its linked cameras' people too
         filter: "all",
         at: new Date(),

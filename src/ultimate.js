@@ -84,13 +84,15 @@
       // A twin-lens camera (a panoramic lens that steers a PTZ, e.g. TandemVu)
       // shows up as two channels at one address. It spots people and vehicles
       // on the panoramic lens only, so the PTZ borrows that lens's markers.
+      // Exactly one other channel at the address: an encoder or a multi-lens
+      // camera (three or more channels at one address) is never linked.
       if (next.ptz && next.ptz.linked === undefined) {
         const channels = device.channels || [];
         const own = channels.find((channel) => channel.id === Number(next.ptz.channel));
         const twins = own && own.ip_address
           ? channels.filter((channel) => channel.id !== own.id && channel.ip_address === own.ip_address).map((c) => c.id)
           : [];
-        if (twins.length) next.ptz = { ...next.ptz, linked: twins };
+        if (twins.length === 1) next.ptz = { ...next.ptz, linked: twins };
       }
       host._config = next;
       // Slots with no camera (offline) are left off unless asked for.

@@ -75,12 +75,19 @@ ptz:
   presets:                 # default: the camera's named presets
     - { name: Driveway, icon: mdi:car, preset: 3 }       # a camera preset
     - { name: Night watch, entity: script.night_watch }   # or your own script
+  linked: [2]              # default: the PTZ's twin lens (see below); [] for none
 ```
 
 **Saved views** come from the presets you have *named* in the camera's own web
 page. Hikvision PTZs report every slot as in use with a default name, and some
 numbers are commands (94 reboots the camera), so unnamed slots and command
 numbers are never listed.
+
+**Twin-lens cameras** (a panoramic lens that steers a PTZ, such as TandemVu)
+appear as two channels and spot people and vehicles on the panoramic lens only,
+so the PTZ's own timeline would stay empty. `ptz.linked` lists the cameras whose
+person / vehicle markers the PTZ shows too. It is filled in for you when exactly
+one other channel has the PTZ's address; set `linked: []` to turn it off.
 
 **go2rtc:** by default live video goes through Home Assistant's own camera
 streaming. If you run go2rtc with one stream per camera, set `go2rtc_url` and a
