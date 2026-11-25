@@ -1226,21 +1226,22 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     }
     return signed;
   };
-  const forgetSigned = () => {
-    signedMap().clear();
-    try {
-      localStorage.removeItem(SIGN_STORE);
-    } catch (_) {
-      /* optional */
-    }
-  };
   const signPicture = async (host, channel, picture) => {
     const map = signedMap();
     const key = `${channel}/${picture}`;
+    const conn = host._hass && host._hass.connection;
+    if (conn && !conn._flxSigWatch) {
+      // Back after Home Assistant restarted: every address may be dead again.
+      conn._flxSigWatch = 1;
+      conn.addEventListener("ready", () => {
+        for (const v of map.values()) v.saved = 1;
+        storeCheck = null;
+      });
+    }
     const known = map.get(key);
     if (known && known.until > Date.now()) {
       if (known.saved) {
-        storeCheck = storeCheck || fetch(known.path).then((r) => r.ok, () => false);
+        storeCheck = storeCheck || fetch(known.path).then((r) => r.status !== 401, () => false);
         if (!(await storeCheck)) for (const [k, v] of map) if (v.saved) map.delete(k);
       }
       if (map.get(key) === known) return known.path;
@@ -1365,14 +1366,11 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
               (url) =>
                 new Promise((done) => {
                   img.onload = done;
-                  // A remembered address stops working when Home Assistant
-                  // restarts, and each refusal is logged as a failed login.
-                  // On the first refusal forget every remembered address, so
-                  // the rest are asked for afresh, and try this one once more.
+                  // Refused or missing: forget this address and try once more.
                   img.onerror = () => {
                     if (img.dataset.retried) return done();
                     img.dataset.retried = "1";
-                    forgetSigned();
+                    signedMap().delete(`${channel}/${button.dataset.picture}`);
                     signPicture(host, channel, button.dataset.picture).then((fresh) => {
                       img.onerror = done;
                       img.src = fresh;
@@ -2759,11 +2757,11 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         button.addEventListener("click", () => goHistory(host, row.ch, row.time - 5000));
         list.appendChild(button);
         const img = button.firstChild;
-        // A remembered address dies when Home Assistant restarts: ask afresh once.
+        // Refused or missing: forget this address and ask afresh once.
         img.onerror = () => {
           if (img.dataset.retried) return;
           img.dataset.retried = "1";
-          forgetSigned();
+          signedMap().delete(`${row.ch}/${row.picture}`);
           signPicture(host, row.ch, row.picture).then((url) => (img.src = url), () => {});
         };
         signPicture(host, row.ch, row.picture)
