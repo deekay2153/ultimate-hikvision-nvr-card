@@ -1,5 +1,8 @@
 # Ultimate Hikvision NVR card
 
+[![HACS: custom](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz/)
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/deekay2153)
+
 **Sick of the boring Hikvision layout and its limits?** This card gives your
 Hikvision recorder a modern camera wall in Home Assistant, with extra abilities
 and proper integration with the rest of your home. Inspired by UniFi Protect,
@@ -135,6 +138,12 @@ either way.
 `python build.py` joins `src/` into `dist/ultimate-nvr-card.js`.
 `preview/index.html` runs the built card against a made-up recorder
 (`python -m http.server` in the repo root, then open `/preview/`).
+
+## Support
+
+If this wall makes your cameras nicer to live with, you can [buy me a coffee](https://www.buymeacoffee.com/deekay2153). Thank you!
+
+Found a bug or have an idea? [Open an issue](https://github.com/deekay2153/ultimate-hikvision-nvr-card/issues).
 
 ## Licence
 
