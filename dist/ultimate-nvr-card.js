@@ -3019,13 +3019,14 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
   const SIGN_LIFE = 86400;
   let signed = null;
   let signedSave = null;
+  let storeCheck = null; // saved addresses all die on a restart: test one, not every one
   const signedMap = () => {
     if (signed) return signed;
     signed = new Map();
     try {
       const now = Date.now();
       const saved = JSON.parse(localStorage.getItem(SIGN_STORE) || "[]");
-      for (const [key, path, until] of saved) if (until > now) signed.set(key, { path, until });
+      for (const [key, path, until] of saved) if (until > now) signed.set(key, { path, until, saved: 1 });
     } catch (_) {
       /* no storage: the map still works for this visit */
     }
@@ -3043,7 +3044,13 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     const map = signedMap();
     const key = `${channel}/${picture}`;
     const known = map.get(key);
-    if (known && known.until > Date.now()) return known.path;
+    if (known && known.until > Date.now()) {
+      if (known.saved) {
+        storeCheck = storeCheck || fetch(known.path).then((r) => r.ok, () => false);
+        if (!(await storeCheck)) for (const [k, v] of map) if (v.saved) map.delete(k);
+      }
+      if (map.get(key) === known) return known.path;
+    }
     const { path } = await host._hass.callWS({
       type: "auth/sign_path",
       // The small cached copy, not the recorder's full-size still.
