@@ -1,48 +1,28 @@
 # Ultimate Hikvision NVR card
 
+**Sick of the boring Hikvision layout?** Here's a UniFi Protect style camera wall for your Hikvision recorder, right inside Home Assistant. Live tiles, a big picture, every person and vehicle of the day, and a PTZ you can actually drive.
+
 [![HACS: custom](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz/)
 [![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/deekay2153)
 
-**Sick of the boring Hikvision layout and its limits?** This card gives your
-Hikvision recorder a modern camera wall in Home Assistant, with extra abilities
-and proper integration with the rest of your home. Inspired by UniFi Protect,
-built for Hikvision.
+![The camera wall](docs/wall.jpg)
 
-- **A camera wall.** One big live picture, every other camera as a live tile
-  beside it. Tap a tile and it swaps in instantly. LIVE and REC badges show
-  what the recorder is actually doing.
-- **PERSON / VEHICLE tags** on a camera while it records something.
-- **PTZ that is usable.** A joystick that moves in any direction, hold-to-zoom,
-  **tap the picture to aim the camera there**, and the camera's named presets
-  as saved views.
-- **A timeline with person and vehicle markers for every camera.** Jump
-  straight to the moment someone walked up the driveway: day stepper,
-  previous / next event, ±10 s, zoom, and saving a clip.
-- **Detections list** down the side: today's people, vehicles and doorbell
-  rings across every camera; tap one to watch it. Swipe it away (or tap its
-  handle) for a bigger wall; swipe in from the right edge to bring it back.
-  The 24-hour bar under the live wall slides away the same way (down / up).
-  On an iPad the screen edges belong to the system, so use the handles there.
-- **Always fills the screen**, whatever the number of cameras, with a
-  Focus / Grid / Single switch in the header.
-- **Phones and tablets too:** portrait and landscape layouts.
-- **Screenshot mode:** add `?blur` to the page address and every camera
-  picture is blurred, so you can share your wall without sharing your house.
+- **One big picture, every other camera live beside it.** Tap a tile and it swaps in instantly.
+- **Fills any screen,** 3 cameras or 16. Focus, Grid or Single at a tap.
+- **Every person and vehicle of the day** on a 24-hour bar and in a list with photos. Tap one to watch it.
+- **A PTZ you can drive.** Joystick in any direction, hold to zoom, tap the picture to aim.
+- **PERSON / VEHICLE tags** on a camera while it records.
+- Works on a PC, an iPad or a phone. Zero setup: one line of YAML.
 
-![The camera wall: one big live picture, every other camera as a live tile, today's people and vehicles down the side](docs/wall.jpg)
+<p>
+  <img src="docs/ptz.jpg" width="38%" alt="Joystick, tap-to-aim and zoom on the big picture">
+  &nbsp;
+  <img src="docs/detections.jpg" width="28%" alt="Today's detections with photos">
+</p>
 
-<sub>Camera pictures blurred with the card's own screenshot mode (add `?blur` to the page address).</sub>
+![The 24-hour bar: green for people, amber for vehicles](docs/timeline.jpg)
 
-<table>
-<tr>
-<td align="center" width="50%"><b>PTZ you can actually use</b><br><br><img src="docs/ptz.jpg" width="300" alt="Joystick, tap-to-aim and zoom on the big picture"><br><br>Joystick in any direction, hold-to-zoom, tap the picture to aim.</td>
-<td align="center" width="50%"><b>Every detection, one tap away</b><br><br><img src="docs/detections.jpg" width="250" alt="Detections list with a PTZ button on twin-lens rows"><br><br>Today's people and vehicles across every camera.</td>
-</tr>
-</table>
-
-<b>The whole day at a glance:</b> green = person, amber = vehicle, on a 24-hour bar for the camera in the big picture. Tap a moment to watch it.
-
-![24-hour bar with person and vehicle markers](docs/timeline.jpg)
+<sub>Camera pictures blurred with the card's screenshot mode (see Good to know).</sub>
 
 ## What you need
 
@@ -116,6 +96,18 @@ one other channel has the PTZ's address; set `linked: []` to turn it off.
 streaming. If you run go2rtc with one stream per camera, set `go2rtc_url` and a
 `stream:` name per camera in `fast_live` (`<name>_main`; tiles use
 `<name>_sub`) for faster starts.
+
+## Good to know
+
+- **Slide things away.** Swipe the detections list to the right, or the
+  24-hour bar down, for a bigger wall. Swipe back in from the edge, or tap the
+  little handle. On an iPad, use the handles: its screen edges belong to iPadOS.
+- **Twin-lens cameras** (a panoramic lens that steers a PTZ) are paired
+  automatically: the PTZ shows the panoramic lens's people and vehicles, and
+  each one gets a ▶ PTZ button to watch the close-up.
+- **Screenshot mode:** add `?blur` to the page address and every camera
+  picture is blurred, so you can share your wall without sharing your house.
+- **History:** day stepper, previous / next event, ±10 s, zoom, and saving a clip.
 
 ## Tested on
 
