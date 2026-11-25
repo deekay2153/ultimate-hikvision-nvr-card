@@ -5021,9 +5021,15 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         :host([wall][lm="single"]) .fl-main > .stage { grid-column: 1 / -1; }
         :host([wall][lm="grid"]) .fl-main > .stage { grid-column: span 1; grid-row: span 1; }
         :host([wall][lm="grid"]) .fl-main .tile.active { display: none !important; }
+        :host([wall][lm="grid"]) .fl-main > .head { order: -1; }
+        :host([wall][lm="grid"]) .fl-main .fl-sum { order: 9998; }
+        :host([wall][lm="grid"]) .fl-main > .fl-tl,
+        :host([wall][lm="grid"]) .fl-main > .fl-deck,
+        :host([wall][lm="grid"]) .fl-main > .fast-filter,
+        :host([wall][lm="grid"]) .fl-main > .err { order: 9999; }
         /* The joystick sets its own display, so hide it this way instead. */
-        :host([wall][lm="grid"]) .stage > .fl-ptz,
-        :host([wall][lm="grid"]) .stage > .fl-presets,
+        :host([wall][lm="grid"]) .stage:not(.fl-full) > .fl-ptz,
+        :host([wall][lm="grid"]) .stage:not(.fl-full) > .fl-presets,
         :host([wall][lm="grid"]) .flx-ptzrow { visibility: hidden !important; pointer-events: none !important; }
       }
       /* The tile's REC marker as a real button, drawn exactly as before. */
@@ -5295,6 +5301,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     ];
     const layoutOf = (host) => {
       if (NARROW.matches || SHORT.matches) return "focus"; // phones keep their own layout
+      if (host._mode === "playback") return "focus"; // History plays on the big picture
       if (!host._flxLayout) {
         let saved = null;
         try {
@@ -5302,7 +5309,8 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         } catch (_) {
           /* private window: use the default */
         }
-        const wanted = (host._config && host._config.view) || "focus";
+        const option = host._config && host._config.view;
+        const wanted = LAYOUTS.some(([id]) => id === option) ? option : "focus";
         host._flxLayout = LAYOUTS.some(([id]) => id === saved) ? saved : wanted;
       }
       return host._flxLayout;
@@ -5330,13 +5338,17 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       const current = host.getAttribute("lm") || "focus";
       box.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lm === current)));
     };
-    const setLayout = (host, layout) => {
+    // `remember: false` for the automatic switch (a camera opened from Grid):
+    // the wall still opens in Grid next time.
+    const setLayout = (host, layout, remember = true) => {
       if (!LAYOUTS.some(([id]) => id === layout)) return;
       host._flxLayout = layout;
-      try {
-        window.localStorage.setItem(LAYOUT_KEY, layout);
-      } catch (_) {
-        /* not remembered in a private window */
+      if (remember) {
+        try {
+          window.localStorage.setItem(LAYOUT_KEY, layout);
+        } catch (_) {
+          /* not remembered in a private window */
+        }
       }
       const glide = captureGlide(host);
       host.setAttribute("lm", layout);
@@ -5349,6 +5361,15 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       if (W.syncTiles) W.syncTiles(host); // Single pauses the hidden tiles, the others bring them back
       haptic("light");
     };
+    const orderCells = (host, layout) => {
+      const root = host.shadowRoot;
+      const ids = (host._channels || []).map((c) => c.id);
+      root.querySelectorAll(".fl-main .tile").forEach((tile) => {
+        tile.style.order = layout === "grid" ? String(ids.indexOf(Number(tile.dataset.channel)) + 1) : "";
+      });
+      const stage = root.querySelector(".fl-main > .stage");
+      if (stage) stage.style.order = layout === "grid" ? String(ids.indexOf(host._selected) + 1) : "";
+    };
     const applyLayout = (host) => {
       const layout = layoutOf(host);
       if (host.getAttribute("lm") !== layout) host.setAttribute("lm", layout);
@@ -5360,8 +5381,11 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           "click",
           (event) => {
             if (host.getAttribute("lm") !== "grid" || NARROW.matches || SHORT.matches) return;
-            if (!event.target.closest || !event.target.closest(".tile")) return;
-            setTimeout(() => setLayout(host, "focus"), 0);
+            const target = event.target;
+            if (!target.closest || target.closest(".flx-rec, .fl-ptz, .fl-presets, .fl-status")) return;
+            const stage = target.closest(".stage");
+            if (!target.closest(".tile") && !(stage && !stage.classList.contains("fl-full"))) return;
+            setTimeout(() => setLayout(host, "focus", false), 0);
           },
           true
         );
@@ -5424,12 +5448,20 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         const main = root && root.querySelector(".fl-main");
         const stage = root && root.querySelector(".fl-main > .stage");
         if (stage && stage.classList.contains("fl-full")) return; // leave the wall underneath alone
+        const layout = layoutOf(host);
+        if (host.getAttribute("lm") !== layout) {
+          // The screen crossed the phone / wide line (an iPad turned), or
+          // History started: bring the layout in step before measuring.
+          host.setAttribute("lm", layout);
+          paintLayoutSwitch(host);
+          if (W.syncTiles) W.syncTiles(host);
+        }
+        orderCells(host, layout);
         const tiles = main
           ? [...main.querySelectorAll(".tile")].filter((el) => getComputedStyle(el).display !== "none").length
           : 0;
-        const layout = layoutOf(host);
         const giveUp = () => {
-          if (host.hasAttribute("flx-fill") || layout !== "focus") placeSum(main, tiles, 5, layout);
+          placeSum(main, tiles, 5, layout);
           host.removeAttribute("flx-fill");
         };
         const wide = !NARROW.matches && !SHORT.matches;

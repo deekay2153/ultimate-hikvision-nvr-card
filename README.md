@@ -58,6 +58,7 @@ columns: 5                 # tiles per row (a wall that fills the screen picks 3
 columns_narrow: 2          # ... on a phone
 live_tiles: true           # live video on the small tiles (all: phones too)
 fill: true                 # fill the screen on wide screens (false: keep 16:9 rows)
+view: focus                # wall layout to start in: focus, grid or single (the header switch remembers your choice)
 show_offline: false        # show recorder slots with no camera
 go2rtc_url: http://<go2rtc host>:1984   # optional, see below
 fast_live:                 # per camera, only what you want to change
