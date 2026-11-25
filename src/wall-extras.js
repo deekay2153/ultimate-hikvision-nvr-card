@@ -32,6 +32,10 @@
  *   8. The 24-hour bar under the live wall does the same: swipe it down, or
  *      tap its handle; swipe up from the bottom edge, or tap the handle, to
  *      bring it back. History always keeps it (it is how you scrub).
+ *   9. In the detections list, a row from a camera linked to the PTZ
+ *      (`ptz.linked`, e.g. the Panoramic lens of a twin-lens camera) gets a
+ *      PTZ pill: the row opens that camera, the pill opens the PTZ's own
+ *      recording of the same moment.
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -246,6 +250,17 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         }
       }
       @media (max-width: 899px), (max-height: 500px) { .flx-tl-tab { display: none; } }
+      /* 9. PTZ pill on rows from the PTZ's linked cameras. */
+      :host([wall]) .fl-ev.flx-has-ptz { position: relative; padding-right: 50px; }
+      .flx-ev-ptz {
+        position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+        display: inline-flex; align-items: center; gap: 3px; padding: 3px 7px 3px 5px;
+        border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+        color: #fff; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
+        cursor: pointer; transition: background .15s;
+      }
+      .flx-ev-ptz svg { width: 12px; height: 12px; fill: currentColor; }
+      .flx-ev-ptz:hover, .flx-ev-ptz:focus-visible { background: var(--fl-accent, #3b82f6); outline: none; }
       /* 6. Layout switch: Focus / Grid / Single, beside Live / History. */
       .flx-lm { margin-right: 8px; }
       .flx-lm button { width: 36px; padding: 0 !important; display: grid; place-items: center; }
@@ -740,6 +755,56 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           (event) => host._tlOff && card.getBoundingClientRect().bottom - event.clientY < 40 && edgeOk(host, event)
         );
       }
+    };
+
+    // ---- 9. PTZ pill in the detections list -------------------------------------------
+    const PTZ_ICON =
+      '<svg viewBox="0 0 24 24"><path d="M12 2 9 5h2v4h2V5h2zM2 12l3 3v-2h4v-2H5V9zm20 0-3-3v2h-4v2h4v2zM12 22l3-3h-2v-4h-2v4H9z"/></svg>';
+    const ptzLinked = (host) => {
+      const ptz = host._config && host._config.ptz;
+      if (!ptz || ptz.channel === undefined) return null;
+      const linked = (ptz.linked || []).map(Number).filter((ch) => ch !== Number(ptz.channel));
+      return linked.length ? { channel: Number(ptz.channel), linked } : null;
+    };
+    const decorateSide = (host) => {
+      const link = ptzLinked(host);
+      const list = host.shadowRoot && host.shadowRoot.querySelector(".fl-side-list");
+      if (!link || !list) return;
+      list.querySelectorAll(".fl-ev[data-key]:not(.flx-has-ptz)").forEach((row) => {
+        const [ch, time] = row.dataset.key.split(":").map(Number);
+        if (!link.linked.includes(ch) || !time || row.querySelector(".flx-ev-ptz")) return;
+        row.classList.add("flx-has-ptz");
+        const pill = document.createElement("span");
+        pill.className = "flx-ev-ptz";
+        pill.setAttribute("role", "button");
+        pill.tabIndex = 0;
+        pill.title = "Watch the PTZ's recording of this moment";
+        pill.setAttribute("aria-label", pill.title);
+        pill.innerHTML = `${PTZ_ICON}PTZ`;
+        const open = (event) => {
+          event.stopPropagation();
+          event.preventDefault();
+          host._flPicked = row.dataset.key;
+          list.querySelectorAll(".fl-ev.fl-picked").forEach((b) => b.classList.remove("fl-picked"));
+          row.classList.add("fl-picked");
+          haptic("light");
+          W.goHistory(host, link.channel, time - 5000);
+        };
+        pill.addEventListener("click", open);
+        pill.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") open(event);
+        });
+        row.appendChild(pill);
+      });
+    };
+    const watchSide = (host) => {
+      const list = host.shadowRoot && host.shadowRoot.querySelector(".fl-side-list");
+      if (!list) return;
+      if (!list._flxPtzWatch) {
+        list._flxPtzWatch = new MutationObserver(() => decorateSide(host));
+        list._flxPtzWatch.observe(list, { childList: true });
+      }
+      decorateSide(host);
     };
 
     // ---- 6. layout switch -------------------------------------------------------------
@@ -1674,6 +1739,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       watchFill(host);
       ensureSideBar(host);
       ensureTimelineBar(host);
+      watchSide(host);
       applyLayout(host);
       fillScreen(host);
       if (!host._flxFillSettle) {
