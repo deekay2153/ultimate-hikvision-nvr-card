@@ -5452,7 +5452,14 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           setSide(host, !!host._sideOff);
         });
         // Drag the handle itself: left opens, right closes.
-        swipe(tab, (direction) => setSide(host, direction === "left"), undefined, true);
+        swipe(
+          tab,
+          (direction) => {
+            if (direction === "left" || direction === "right") setSide(host, direction === "left");
+          },
+          undefined,
+          true
+        );
         card.appendChild(tab);
       }
       if (!side._flxSwipe) {
@@ -5491,7 +5498,14 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       if (tab) tab.setAttribute("aria-label", open ? "Hide the 24-hour bar" : "Show the 24-hour bar");
       haptic("light");
       clearTimeout(host._flxTlFit);
-      host._flxTlFit = setTimeout(() => fillScreen(host), 320);
+      host._flxTlFit = setTimeout(() => {
+        fillScreen(host);
+        measureTimelineBar(host, host.shadowRoot && host.shadowRoot.querySelector(".fl-main > .fl-livetl"));
+      }, 320);
+    };
+    const measureTimelineBar = (host, bar) => {
+      const height = bar && (host._tlOff ? bar.scrollHeight : bar.offsetHeight);
+      if (height) host.style.setProperty("--flx-tl-h", `${height + 2}px`);
     };
     const ensureTimelineBar = (host) => {
       const root = host.shadowRoot;
@@ -5512,7 +5526,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       // The handle only shows while there is a live 24-hour bar to hide.
       host.toggleAttribute("tl-live", !!bar);
       if (!bar) return;
-      if (!host._tlOff && bar.offsetHeight) host.style.setProperty("--flx-tl-h", `${bar.offsetHeight + 2}px`);
+      measureTimelineBar(host, bar);
       if (!card.querySelector(":scope > .flx-tl-tab")) {
         const tab = document.createElement("button");
         tab.type = "button";

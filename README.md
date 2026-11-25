@@ -19,6 +19,7 @@ built for Hikvision.
   rings across every camera; tap one to watch it. Swipe it away (or tap its
   handle) for a bigger wall; swipe in from the right edge to bring it back.
   The 24-hour bar under the live wall slides away the same way (down / up).
+  On an iPad the screen edges belong to the system, so use the handles there.
 - **Phones and tablets too:** portrait and landscape layouts.
 
 <!-- screenshots / GIF go here -->
