@@ -760,7 +760,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
 
     // ---- 9. PTZ pill in the detections list -------------------------------------------
     const PTZ_ICON =
-      '<svg viewBox="0 0 24 24"><path d="M12 2 9 5h2v4h2V5h2zM2 12l3 3v-2h4v-2H5V9zm20 0-3-3v2h-4v2h4v2zM12 22l3-3h-2v-4h-2v4H9z"/></svg>';
+      '<svg viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>';
     const ptzLinked = (host) => {
       const ptz = host._config && host._config.ptz;
       if (!ptz || ptz.channel === undefined) return null;
