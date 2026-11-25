@@ -30,6 +30,8 @@ VERSION = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["versi
 
 OLD_TAG = "hikvision-nvr-card"
 NEW_TAG = "ultimate-nvr-card"
+# The tag, but not inside this card's own name ("ultimate-hikvision-nvr-card").
+OLD_TAG_RE = re.compile(r"(?<!ultimate-)hikvision-nvr-card")
 
 
 def base_card() -> str:
@@ -52,11 +54,11 @@ def base_card() -> str:
     )
     assert n == 1, "version line not found"
     s = s.replace("HIKVISION-NVR-CARD", "ULTIMATE-NVR-CARD")
-    return s.replace(OLD_TAG, NEW_TAG)
+    return OLD_TAG_RE.sub(NEW_TAG, s)
 
 
 def layer(name: str) -> str:
-    return (SRC / name).read_text(encoding="utf-8").replace(OLD_TAG, NEW_TAG)
+    return OLD_TAG_RE.sub(NEW_TAG, (SRC / name).read_text(encoding="utf-8"))
 
 
 def main() -> None:

@@ -6938,7 +6938,7 @@ const customElements = (() => {
       name: "Ultimate Hikvision NVR",
       description: "Camera wall for a Hikvision recorder: live grid, PTZ joystick, person / vehicle timeline.",
       preview: false,
-      documentationURL: "https://github.com/deekay2153/ultimate-ultimate-nvr-card",
+      documentationURL: "https://github.com/deekay2153/ultimate-hikvision-nvr-card",
     });
   }
 })();
