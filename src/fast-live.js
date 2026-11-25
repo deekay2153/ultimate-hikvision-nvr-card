@@ -2751,9 +2751,17 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         button.lastChild.textContent = `${names[row.ch] || ""}, ${clock(row.time).slice(0, 5)}`;
         button.addEventListener("click", () => goHistory(host, row.ch, row.time - 5000));
         list.appendChild(button);
+        const img = button.firstChild;
+        // A remembered address dies when Home Assistant restarts: ask afresh once.
+        img.onerror = () => {
+          if (img.dataset.retried) return;
+          img.dataset.retried = "1";
+          forgetSigned();
+          signPicture(host, row.ch, row.picture).then((url) => (img.src = url), () => {});
+        };
         signPicture(host, row.ch, row.picture)
           .then((url) => {
-            button.firstChild.src = url;
+            img.src = url;
           })
           .catch(() => {});
       }
