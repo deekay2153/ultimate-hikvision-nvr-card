@@ -78,7 +78,30 @@ def main() -> None:
     )
     # Each part keeps its own scope: the sources share top-level names (API,
     # clamp, ...) that would clash in one module.
-    body = "".join(f"\n// ---- {name} ----\n{{\n{text}\n}}\n" for name, text in parts)
+    #
+    # The layers wait with customElements.whenDefined(...).then(patch). In one
+    # file the element is already defined, but that callback still runs a beat
+    # later, and Lovelace can create a card in between: a wall drawn without
+    # its layers. So inside the layers, whenDefined on an element that already
+    # exists calls back at once.
+    shim = (
+        "const customElements = (() => {\n"
+        "  const real = window.customElements;\n"
+        "  return {\n"
+        "    get: (tag) => real.get(tag),\n"
+        "    define: (...args) => real.define(...args),\n"
+        "    upgrade: (...args) => real.upgrade(...args),\n"
+        "    whenDefined: (tag) => real.get(tag)\n"
+        "      ? { then(done) { done(real.get(tag)); return Promise.resolve(real.get(tag)); } }\n"
+        "      : real.whenDefined(tag),\n"
+        "  };\n"
+        "})();\n"
+    )
+    layers = {"fast-live.js", "wall-extras.js", "ultimate.js"}
+    body = "".join(
+        f"\n// ---- {name} ----\n{{\n{shim if name in layers else ''}{text}\n}}\n"
+        for name, text in parts
+    )
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(header + body, encoding="utf-8", newline="\n")
     digest = hashlib.sha256(OUT.read_bytes()).hexdigest()[:12]

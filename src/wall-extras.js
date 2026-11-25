@@ -141,6 +141,37 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       .flx-clock b { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
       .flx-clock span { font-size: 13px; color: var(--fl-muted); }
       @media (max-width: 899px) { .flx-clock { display: none; } }
+      /* The camera on the big picture, top left: a type chip, the name, and a
+         status line (channel, PTZ, live / recording / history). */
+      :host([wall]) .fl-main > .head .title {
+        display: flex; align-items: center; gap: 11px; min-width: 0;
+        font-size: 0; letter-spacing: 0; /* the name is drawn by .flx-name */
+      }
+      .flx-chip {
+        flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+        color: #fff; background: linear-gradient(140deg, color-mix(in srgb, var(--fl-accent) 92%, #fff 8%),
+          color-mix(in srgb, var(--fl-accent) 55%, #000 45%));
+        box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--fl-accent) 80%, transparent),
+          inset 0 1px 0 rgba(255,255,255,.22);
+      }
+      .flx-chip svg { width: 19px; height: 19px; fill: currentColor; display: block; }
+      .flx-titletext { display: flex; flex-direction: column; min-width: 0; line-height: 1.12; }
+      .flx-name {
+        font-size: 19px; font-weight: 700; letter-spacing: -.015em; color: var(--primary-text-color, #fff);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .flx-sub {
+        display: flex; align-items: center; gap: 6px; margin-top: 3px;
+        font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+        color: var(--fl-muted, #8a93a6); white-space: nowrap;
+      }
+      .flx-sub i { width: 6px; height: 6px; border-radius: 50%; background: var(--fl-live, #ff5a52); flex: none; }
+      .flx-sub i.rec { animation: flx-sub-pulse 1.6s ease-in-out infinite; }
+      .flx-sub i.hist { background: var(--fl-accent); }
+      .flx-sub em { font-style: normal; opacity: .55; }
+      @keyframes flx-sub-pulse { 50% { opacity: .35; } }
+      @media (prefers-reduced-motion: reduce) { .flx-sub i.rec { animation: none; } }
+      @media (max-height: 500px) { .flx-sub { display: none; } .flx-chip { width: 28px; height: 28px; } }
       /* The tile's REC marker as a real button, drawn exactly as before. */
       .flx-rec {
         display: none; position: absolute; left: 7px; top: 7px; height: 20px; box-sizing: border-box;
@@ -155,11 +186,15 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       .tile.fl-recording:has(> .flx-rec)::after { display: none; }
 
       /* Fill the screen (wide screens): the wall is exactly as tall as the room
-         under the page header, and the camera rows share that height, so there
-         is never a gap at the bottom. Tiles and the big picture let go of 16:9;
-         pictures are cropped to fill a tile, the big picture is shown whole. */
+         under the page header. The number of tile columns is picked so the
+         natural 16:9 layout comes closest to that room (3 to 7 columns); the camera rows then
+         share the small remainder, so there is no gap at the bottom and tiles
+         are only slightly cropped. The big picture is always shown whole. */
       :host([wall][flx-fill]) ha-card { height: var(--flx-fill-h); }
-      :host([wall][flx-fill]) .fl-main { grid-template-rows: var(--flx-rows); align-content: stretch; }
+      :host([wall][flx-fill]) .fl-main {
+        grid-template-columns: repeat(var(--flx-cols, 5), minmax(0, 1fr));
+        grid-template-rows: var(--flx-rows); align-content: stretch;
+      }
       :host([wall][flx-fill]) .fl-main > .stage,
       :host([wall][flx-fill]) .fl-main .tile,
       :host([wall][flx-fill]) .fl-main .fl-sum { aspect-ratio: auto; height: auto; min-height: 0; }
@@ -398,30 +433,94 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       window.addEventListener("resize", host._flxNarrow);
     };
     // ---- fill the screen -------------------------------------------------------------
+    // Wide screens only (not phones, not a phone on its side, not full screen),
+    // and not with `fill: false`. Never squashes: when even the most compact
+    // layout is taller than the room, the page scrolls as before.
+    const FILL_COLUMNS = [7, 6, 5, 4, 3]; // more columns let big systems fit
+    const GAP = 4; // .fl-main gap
+    const fillRoom = (host) => {
+      const scroller = scrollParent(host);
+      const box = host.getBoundingClientRect();
+      if (scroller) {
+        const top = box.top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        return scroller.clientHeight - top;
+      }
+      const visible = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+      return visible - (box.top + window.scrollY);
+    };
+    // Where the Today cell goes so a layout has no holes, or null when that
+    // layout cannot avoid one. Beside the 3 x 3 big picture are 3 rows of
+    // (columns - 3) cells; the other cameras fill them first, then rows below.
+    const sumFor = (columns, tiles) => {
+      const beside = columns - 3;
+      const room = 3 * beside;
+      if (tiles >= room) {
+        const left = (columns - ((9 + tiles) % columns)) % columns;
+        return { span: left, rows: 1 };
+      }
+      if (beside === 1) return { span: 1, rows: room - tiles }; // a tall cell down the side
+      if (tiles >= room - beside) return { span: room - tiles, rows: 1 }; // one short last row
+      return null;
+    };
+    const placeSum = (main, tiles, columns) => {
+      const place = sumFor(columns, tiles) || { span: 0, rows: 1 };
+      const left = place.span;
+      let sum = main.querySelector(".fl-sum");
+      if (!sum && left) {
+        sum = document.createElement("div");
+        sum.className = "fl-sum";
+        (main.querySelector(".grid") || main).appendChild(sum);
+      }
+      if (!sum) return;
+      sum.style.gridColumn = left ? `span ${left}` : "";
+      sum.style.gridRow = left && place.rows > 1 ? `span ${place.rows}` : "";
+      sum.style.display = left ? "" : "none";
+    };
     const fillScreen = (host) => {
       try {
         const root = host.shadowRoot;
         const main = root && root.querySelector(".fl-main");
         const stage = root && root.querySelector(".fl-main > .stage");
-        const wide = !NARROW.matches && !SHORT.matches && !(stage && stage.classList.contains("fl-full"));
-        if (!main || !wide || (host._config && host._config.fill === false)) {
+        if (stage && stage.classList.contains("fl-full")) return; // leave the wall underneath alone
+        const tiles = main
+          ? [...main.querySelectorAll(".tile")].filter((el) => getComputedStyle(el).display !== "none").length
+          : 0;
+        const giveUp = () => {
+          if (host.hasAttribute("flx-fill")) placeSum(main, tiles, 5);
           host.removeAttribute("flx-fill");
+        };
+        const wide = !NARROW.matches && !SHORT.matches;
+        if (!main || !stage || !wide || (host._config && host._config.fill === false)) {
+          if (main) giveUp();
+          else host.removeAttribute("flx-fill");
           return;
         }
-        const top = host.getBoundingClientRect().top;
-        if (top < 0) return; // scrolled: keep what we had
-        const height = Math.max(420, Math.floor(window.innerHeight - top - 8));
-        // Rows of cameras: the big picture takes 3 x 3 cells of the 5 columns.
-        let cells = 9;
-        main.querySelectorAll(".tile, .fl-sum").forEach((el) => {
-          if (getComputedStyle(el).display === "none") return;
-          const span = /span (\d+)/.exec(el.style.gridColumn || "");
-          cells += span ? Number(span[1]) : 1;
-        });
-        const columns = getComputedStyle(main).gridTemplateColumns.split(" ").length || 5;
-        const rows = Math.max(3, Math.ceil(cells / columns));
-        host.style.setProperty("--flx-fill-h", `${height}px`);
-        host.style.setProperty("--flx-rows", `auto repeat(${rows}, minmax(0, 1fr))`);
+        const room = Math.floor(fillRoom(host) - 8);
+        // What is not camera rows: the header row, and History's controls and
+        // the timeline under the cameras.
+        let fixed = 6; // .fl-main bottom padding
+        for (const el of main.children) {
+          if (el === stage || el.classList.contains("tile") || el.classList.contains("fl-sum") ||
+              el.classList.contains("grid") || getComputedStyle(el).display === "none") continue;
+          fixed += el.getBoundingClientRect().height + GAP;
+        }
+        const width = main.clientWidth - 8; // .fl-main side padding
+        let best = null;
+        for (const columns of FILL_COLUMNS) {
+          if (!sumFor(columns, tiles)) continue; // this layout would leave a hole
+          const cell = (width - (columns - 1) * GAP) / columns;
+          const rows = Math.max(3, Math.ceil((9 + tiles) / columns));
+          const natural = fixed + rows * ((cell * 9) / 16) + (rows - 1) * GAP;
+          if (natural <= room && (!best || natural > best.natural)) best = { columns, rows, natural };
+        }
+        if (!best || room < 360) {
+          giveUp();
+          return;
+        }
+        host.style.setProperty("--flx-cols", String(best.columns));
+        host.style.setProperty("--flx-fill-h", `${room}px`);
+        host.style.setProperty("--flx-rows", `auto repeat(${best.rows}, minmax(0, 1fr))`);
+        placeSum(main, tiles, best.columns);
         host.setAttribute("flx-fill", "");
       } catch (err) {
         console.warn("nvr wall: fill the screen failed", err);
@@ -429,12 +528,28 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     };
     const watchFill = (host) => {
       if (host._flxFill) return;
-      host._flxFill = () => fillScreen(host);
+      let queued = false;
+      host._flxFill = () => {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => {
+          queued = false;
+          fillScreen(host);
+        });
+      };
       window.addEventListener("resize", host._flxFill);
+      // The page header can change height without the window resizing (edit
+      // mode, a tab bar appearing): watch the box the card sits in.
+      if (window.ResizeObserver && host.parentElement) {
+        host._flxFillObs = new ResizeObserver(host._flxFill);
+        host._flxFillObs.observe(host.parentElement);
+      }
     };
     const unwatchFill = (host) => {
       if (!host._flxFill) return;
       window.removeEventListener("resize", host._flxFill);
+      if (host._flxFillObs) host._flxFillObs.disconnect();
+      host._flxFillObs = null;
       host._flxFill = null;
     };
     const unwatchNarrow = (host) => {
@@ -695,6 +810,45 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     // ---- 3. time and date in the header ----------------------------------------
     const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    // The title of the camera on the big picture (see the CSS above). The card
+    // writes the plain name into .title; it is mirrored into .flx-name, so the
+    // card's own updates keep working.
+    const ICON_PTZ =
+      "M12 2a3 3 0 0 1 3 3v1h2a2 2 0 0 1 2 2v3a7 7 0 0 1-14 0V8a2 2 0 0 1 2-2h2V5a3 3 0 0 1 3-3m0 8a3 3 0 1 0 0 6 3 3 0 0 0 0-6M5 20h14v2H5z";
+    const ICON_CAM =
+      "M18 10.48V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4.48l4 3.98v-11zM10 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6";
+    const paintTitle = (host) => {
+      try {
+        const title = host.shadowRoot && host.shadowRoot.querySelector(".fl-main > .head .title");
+        if (!title) return;
+        const name = [...title.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join("").trim() ||
+          (title.querySelector(".flx-name") || {}).textContent || "";
+        const channel = (host._channels || []).find((c) => c.id === host._selected) || {};
+        const ptz = !!channel.ptz || Number((host._config.ptz || {}).channel) === host._selected;
+        const recording = !!(host._recording && host._recording[host._selected]);
+        const history = host._mode === "playback";
+        const state = history ? "hist" : recording ? "rec" : "live";
+        const sig = [name, host._selected, ptz, state].join("|");
+        if (!title._flxObs && window.MutationObserver) {
+          // The card writes the plain name straight into .title when the big
+          // picture swaps camera: dress it again at once.
+          title._flxObs = new MutationObserver(() => paintTitle(host));
+          title._flxObs.observe(title, { childList: true });
+        }
+        if (title.dataset.flx === sig && title.querySelector(".flx-chip")) return;
+        title.dataset.flx = sig;
+        const label = history ? "History" : recording ? "Recording" : "Live";
+        title.innerHTML =
+          `<span class="flx-chip"><svg viewBox="0 0 24 24"><path d="${ptz ? ICON_PTZ : ICON_CAM}"/></svg></span>` +
+          '<span class="flx-titletext"><span class="flx-name"></span>' +
+          `<span class="flx-sub"><i class="${state}"></i>${label}<em>/</em>CH ${host._selected}` +
+          `${ptz ? "<em>/</em>PTZ" : ""}</span></span>`;
+        title.querySelector(".flx-name").textContent = name;
+        title.title = name;
+      } catch (_) {
+        /* the plain name stays */
+      }
+    };
     const paintClock = (host) => {
       const head = host.shadowRoot && host.shadowRoot.querySelector(".fl-main > .head");
       if (!head) return;
@@ -1020,7 +1174,12 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     };
     const runTags = (host) => {
       paintTags(host);
-      if (!host._flxTagTimer) host._flxTagTimer = setInterval(() => paintTags(host), TAG_TICK);
+      if (!host._flxTagTimer) {
+        host._flxTagTimer = setInterval(() => {
+          paintTags(host);
+          paintTitle(host);
+        }, TAG_TICK);
+      }
     };
 
     // ---- wiring -----------------------------------------------------------------
@@ -1040,10 +1199,14 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       watchNarrow(host);
       watchFill(host);
       fillScreen(host);
-      setTimeout(() => fillScreen(host), 300); // after the page header has settled
+      if (!host._flxFillSettle) {
+        // Once, after the page header has settled on first arrival.
+        host._flxFillSettle = setTimeout(() => fillScreen(host), 400);
+      }
       if (host._flxClock) paintClock(host);
       else runClock(host);
       runTags(host);
+      paintTitle(host);
     };
     // A custom element's connected / disconnected callbacks are fixed when it is
     // defined, so patching them now would do nothing. The card's own callbacks

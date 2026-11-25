@@ -53,7 +53,8 @@ window.loadCardHelpers = async () => ({
 await import(`../dist/ultimate-nvr-card.js?t=${Date.now()}`);
 
 // A made-up recorder: 6 cameras, channel 1 a PTZ, channel 4 without a camera entity.
-const names = ["Driveway PTZ", "Street", "Backyard", "Garage", "Side", "Porch"];
+const count = Number(new URLSearchParams(location.search).get("cams")) || 6;
+const names = Array.from({ length: count }, (_, i) => ["Driveway PTZ", "Street", "Backyard", "Garage", "Side", "Porch"][i] || `Camera ${i + 1}`);
 const channels = names.map((name, i) => ({
   id: i + 1, name, online: true, has_audio: i % 2 === 0, ptz: i === 0, streams: [1, 2],
   entity_id: i === 3 ? null : `camera.cam_${i + 1}`,

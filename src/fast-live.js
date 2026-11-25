@@ -670,12 +670,15 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       performance: { features: { animated_progress_indicator: false } },
       // On a wall that fills the screen the big picture's box is not 16:9:
       // let the player take the box and show the whole picture inside it.
-      dimensions: !tile && isWall(host) && host._config.fill !== false &&
-        !window.matchMedia("(max-width: 899px), (max-height: 500px)").matches
+      // On the wall the big picture fills whatever box the layout gives it
+      // (16:9, or taller / shorter when the wall fills the screen) and shows
+      // the whole picture inside it.
+      dimensions: !tile && isWall(host)
         ? { aspect_ratio_mode: "unconstrained" }
         : { aspect_ratio: "16:9" },
       views: ["live"],
-      cameras_global: { dimensions: { layout: { fit: "contain" } } },
+      // A tile crops to fill itself, like its still picture underneath.
+      cameras_global: { dimensions: { layout: { fit: tile ? "cover" : "contain" } } },
     });
     card.style.setProperty("--advanced-camera-card-loading-foreground-color", "transparent");
     card.style.setProperty("--advanced-camera-card-loading-background-color", "transparent");
@@ -1108,16 +1111,26 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     const entry = entryFor(this, this._selected);
     if (!entry || !customElements.get("advanced-camera-card")) {
       const result = await originalLive.call(this, stage);
-      try {
-        if (isWall(this) && stage.isConnected && this._mode === "live") {
+      const dress = () => {
+        try {
+          if (!isWall(this) || !stage.isConnected || this._mode !== "live") return;
+          if (stage.querySelector(":scope > .fl-status")) return;
           renderStatus(this, stage);
           renderPtz(this, stage);
           hook("ptz", this, stage);
-          wallLive(this);
+        } catch (err) {
+          console.warn("nvr fast-live: controls on the plain live view failed", err);
         }
-      } catch (err) {
-        console.warn("nvr fast-live: controls on the plain live view failed", err);
-      }
+      };
+      dress();
+      // The plain view can switch player a few seconds in (and empties the
+      // stage to do it): dress it again when that happens.
+      if (stage._flPlainObs) stage._flPlainObs.disconnect();
+      stage._flPlainObs = new MutationObserver(() => {
+        if (!stage.isConnected) return stage._flPlainObs.disconnect();
+        dress();
+      });
+      stage._flPlainObs.observe(stage, { childList: true });
       return result;
     }
     const key = keyFor(this._selected, entry);
