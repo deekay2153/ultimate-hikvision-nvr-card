@@ -4860,8 +4860,8 @@ const customElements = (() => {
  *   2. Gate and doorbell rings in the detections list, from Home Assistant's
  *      history of each camera's `ring` sensor, with the photo the automation
  *      "Doorbell - save a photo of each ring" took (media folder
- *      doorbell/<date>/<camera>_<HHMMSS>.jpg; photos older than 14 days are
- *      deleted from here, by an admin's wall):
+ *      doorbell/<date>/<camera>_<HHMMSS>.jpg; with card option
+ *      `ring_photo_days: N`, an admin's wall deletes photos older than N days):
  *        fast_live:
  *          3: { ..., ring: binary_sensor.gate_ringing }
  *          4: { ..., ring: binary_sensor.doorbell_ringing }
@@ -6130,7 +6130,6 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
     // Photos: media-source local/doorbell/<YYYY-MM-DD>/<camera>_<HHMMSS>.jpg,
     // where <camera> is the camera entity's object id (e.g. front_door).
     const BELL_ROOT = "media-source://media_source/local/doorbell";
-    const BELL_KEEP_DAYS = 14;
     const bellFolder = (host, day) => {
       host._flxBellDays = host._flxBellDays || {};
       const cached = host._flxBellDays[day];
@@ -6165,16 +6164,19 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       const resolved = await host._hass.callWS({ type: "media_source/resolve_media", media_content_id: best.id });
       return resolved && resolved.url;
     };
-    // Once every 12 hours, an admin's wall deletes ring photos older than 14 days.
+    // Only with card option `ring_photo_days: N` (off unless set): once every
+    // 12 hours, an admin's wall deletes ring photos older than N days.
     const pruneBellPhotos = async (host) => {
       try {
+        const keepDays = Number(host._config && host._config.ring_photo_days) || 0;
+        if (!(keepDays > 0)) return;
         const user = host._hass && host._hass.user;
         if (!user || !user.is_admin || Date.now() - (host._flxBellPruned || 0) < 43200000) return;
         host._flxBellPruned = Date.now();
         const root = await host._hass.callWS({ type: "media_source/browse_media", media_content_id: BELL_ROOT });
         const oldest = new Date();
         oldest.setHours(0, 0, 0, 0);
-        oldest.setDate(oldest.getDate() - BELL_KEEP_DAYS);
+        oldest.setDate(oldest.getDate() - keepDays);
         for (const day of root.children || []) {
           if (!/^\d{4}-\d\d-\d\d$/.test(day.title || "") || day.title >= isoDay(oldest)) continue;
           const folder = await host._hass.callWS({ type: "media_source/browse_media", media_content_id: day.media_content_id });

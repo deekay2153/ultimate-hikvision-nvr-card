@@ -1,113 +1,155 @@
 # Ultimate Hikvision NVR card
 
-**Sick of the boring Hikvision layout?** Here's a UniFi Protect style camera wall for your Hikvision recorder, right inside Home Assistant. Live tiles, a big picture, every person and vehicle of the day, and a PTZ you can actually drive.
+<p align="center"><img src="docs/wall.jpg" alt="The camera wall: one big live picture, live tiles for every other camera, a 24-hour bar of people and vehicles, and today's detections down the side"><br><sub>A real wall, with the camera pictures blurred by the card's own screenshot mode.</sub></p>
+
+**Sick of the boring Hikvision layout and its limits?** This card turns your Hikvision recorder into a modern camera wall inside Home Assistant, with abilities Hik-Connect and iVMS never had. Inspired by UniFi Protect, built for Hikvision. No cloud, no extra app: it talks to your recorder on your own network.
 
 [![HACS: custom](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz/)
-[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/deekay2153)
+[![Release](https://img.shields.io/github/v/release/deekay2153/ultimate-hikvision-nvr-card?sort=semver)](https://github.com/deekay2153/ultimate-hikvision-nvr-card/releases)
 
-![The camera wall](docs/wall.jpg)
+<p align="center"><a href="https://www.buymeacoffee.com/deekay2153"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="50"></a></p>
 
-- **One big picture, every other camera live beside it.** Tap a tile and it swaps in instantly.
-- **Fills any screen,** 3 cameras or 16. Focus, Grid or Single at a tap.
-- **Every person and vehicle of the day** on a 24-hour bar and in a list with photos. Tap one to watch it.
-- **A PTZ you can drive.** Joystick in any direction, hold to zoom, tap the picture to aim.
-- **PERSON / VEHICLE tags** on a camera while it records.
-- Works on a PC, an iPad or a phone. Zero setup: one line of YAML.
+> Not affiliated with or endorsed by Hikvision or Ubiquiti. "Hikvision", "UniFi" and "UniFi Protect" are their trademarks.
 
-<p>
-  <img src="docs/ptz.jpg" width="38%" alt="Joystick, tap-to-aim and zoom on the big picture">
-  &nbsp;
-  <img src="docs/detections.jpg" width="28%" alt="Today's detections with photos">
-</p>
-
-![The 24-hour bar: green for people, amber for vehicles](docs/timeline.jpg)
-
-<sub>Camera pictures blurred with the card's screenshot mode (see Good to know).</sub>
-
-## What you need
+## What you get
 
 | | |
 |---|---|
-| **[Ultimate Hikvision NVR](https://github.com/deekay2153/ultimate-hikvision-nvr)** | The integration (a fork of `hikvision-nvr-ha`). It finds the cameras, plays the recordings and does the person / vehicle search. |
-| **[Advanced Camera Card](https://github.com/dermotduffy/advanced-camera-card)** | Plays the live video. |
-| A Hikvision NVR with ISAPI | Person / vehicle markers need a recorder with AcuSense (smart search); without it you get the timeline without markers. |
+| **A live wall that fills the screen** | One big live picture, every other camera as a live tile beside it. Tap a tile and it swaps in instantly. On a tablet or PC it lays itself out to fill the screen whether you have 3 cameras or 18: **Focus**, **Grid** or **Single** at a tap. |
+| **Every person and vehicle of the day** | Green for people, amber for vehicles, on a 24-hour bar under the live wall. The detections list down the side shows today's people and vehicles across every camera, each with a photo. Tap one and you're watching that moment. |
+| **History that's quick to use** | Play any moment straight from the recorder's disks: day stepper, previous / next event, ±10 s, a zoomable timeline, and saving a clip. |
+| **A PTZ you can actually drive** | A joystick that moves in any direction and speed, hold to zoom, **tap the picture to aim the camera there**, and your camera's named presets as saved views. |
+| **PERSON / VEHICLE tags** | Pop up on a camera's tile while the recorder is recording something on it. |
+| **LIVE and REC badges** | Show what the recorder is really doing. Tap REC to open that recording. |
+| **Doorbells and gates** | Point a camera at your doorbell sensor and rings show up in the detections list, with a photo if you save one (see [Doorbell photos](#doorbell-photos)). |
+| **Twin-lens cameras** | A panoramic lens that steers a PTZ (TandemVu and the like) is paired automatically: the PTZ shows the panoramic lens's detections, and each one gets a ▶ PTZ button to see what the PTZ lens recorded at that moment. |
+| **Phones and tablets** | Portrait and landscape layouts. Swipe the detections list or the 24-hour bar away for a bigger wall. |
+| **Screenshot mode** | Add `?blur` to the page address and every camera picture is blurred, so you can share your wall without sharing your house. |
+
+<p align="center">
+  <img src="docs/ptz.jpg" width="300" alt="Joystick, tap-to-aim and zoom on the big picture">
+  &nbsp;&nbsp;
+  <img src="docs/detections.jpg" width="230" alt="Today's detections with photos and the PTZ button">
+</p>
+<p align="center"><img src="docs/timeline.jpg" alt="The 24-hour bar: green for people, amber for vehicles, the red Live marker at now"></p>
+
+## Requirements
+
+- A **Hikvision NVR** with ISAPI (practically every recent model). Person and vehicle markers need a recorder with **AcuSense** (smart search); without it you still get the wall, History and the timeline, just without markers.
+- **[Ultimate Hikvision NVR](https://github.com/deekay2153/ultimate-hikvision-nvr)**, the integration that talks to the recorder (a fork of `hikvision-nvr-ha`).
+- **[Advanced Camera Card](https://github.com/dermotduffy/advanced-camera-card)**, which plays the live video.
+- Home Assistant 2025.2 or newer. go2rtc is optional (faster starts, see [Options](#options)).
 
 ## Install
 
-1. Install the [integration](https://github.com/deekay2153/ultimate-hikvision-nvr)
-   and add your recorder (see its README).
-2. In HACS, install **Advanced Camera Card** (it is in the default list). It
-   plays the live video.
-3. HACS → ⋮ → **Custom repositories** → add
-   `https://github.com/deekay2153/ultimate-hikvision-nvr-card`, category **Dashboard**,
-   then install **Ultimate Hikvision NVR card**.
-4. Add the card. That is all it needs:
+**HACS (recommended)**
+
+1. Install the [integration](https://github.com/deekay2153/ultimate-hikvision-nvr) and add your recorder (*Settings → Devices & services → Add integration → Hikvision NVR*).
+2. In HACS, install **Advanced Camera Card** (it's in the default list).
+3. HACS → three-dot menu → *Custom repositories* → add `https://github.com/deekay2153/ultimate-hikvision-nvr-card`, type *Dashboard*.
+4. Install **Ultimate Hikvision NVR card**, then reload your browser.
+
+**Manual:** download `ultimate-nvr-card.js` from the [latest release](https://github.com/deekay2153/ultimate-hikvision-nvr-card/releases/latest), put it in `config/www/`, and add `/local/ultimate-nvr-card.js` under *Settings → Dashboards → ⋮ → Resources* as a **JavaScript module**.
+
+## Set up
+
+Add a card with one line:
 
 ```yaml
 type: custom:ultimate-nvr-card
 ```
 
-It finds the recorder, its cameras, their Home Assistant camera entities and
-motion sensors, and the first PTZ camera by itself. For the camera wall a
-panel view (one card, whole page) looks best.
+That's all it needs. It finds by itself:
+
+- your recorder and its cameras (cameras that are offline are left off),
+- each camera's Home Assistant camera entity and motion sensors,
+- the first PTZ camera, its named presets, and its twin lens if it has one.
+
+For the wall, put it on a **panel view** (one card, whole page): *Edit dashboard → add view → View type: Panel*.
 
 ## Options
 
 Everything is optional; anything you set wins over what the card works out.
 
+| Option | Default | What it does |
+|---|---|---|
+| `device` | first recorder | Which recorder, if you have more than one. |
+| `channels` | all online | Which cameras, in this order, e.g. `[1, 2, 5]`. |
+| `default_mode` | `live` | Open on `live` or `playback` (History). |
+| `view` | `focus` | Wall layout to start in: `focus`, `grid` or `single`. The header switch remembers each browser's choice. |
+| `fill` | `true` | Fill the screen on wide screens. `false` keeps plain 16:9 rows. |
+| `columns` / `columns_narrow` | `5` / `2` | Tiles per row when not filling, and on a phone. (Filling picks 3 to 7 itself.) |
+| `live_tiles` | `true` | Live video on the small tiles. Off on phones unless `all`. |
+| `show_offline` | `false` | Show recorder slots with no camera. |
+| `go2rtc_url` | none | Play go2rtc streams instead of Home Assistant's own streaming (faster starts). |
+| `ring_photo_days` | off | Delete doorbell photos older than this many days. See [Doorbell photos](#doorbell-photos). |
+| `fast_live` | found for you | Per camera: `name`, `ring`, `ring_label`, `buttons`, `stream`. |
+| `ptz` | found for you | `channel`, `presets`, `linked`, `joystick`. |
+
+A fuller example:
+
 ```yaml
 type: custom:ultimate-nvr-card
-device: DS-7608NI-…        # which recorder, if you have more than one
-channels: [1, 2, 5]        # which cameras, in this order (default: all)
-default_mode: live         # or: playback
-columns: 5                 # tiles per row (a wall that fills the screen picks 3 to 7 itself)
-columns_narrow: 2          # ... on a phone
-live_tiles: true           # live video on the small tiles (all: phones too)
-fill: true                 # fill the screen on wide screens (false: keep 16:9 rows)
-view: focus                # wall layout to start in: focus, grid or single (the header switch remembers your choice)
-show_offline: false        # show recorder slots with no camera
-go2rtc_url: http://<go2rtc host>:1984   # optional, see below
-fast_live:                 # per camera, only what you want to change
+channels: [1, 2, 3, 4, 5, 6]
+view: focus
+fast_live:
   3:
     name: Front Gate
-    ring: binary_sensor.gate_ringing   # doorbell rings in the detections list
-    buttons:                           # buttons on the big picture
+    ring: binary_sensor.gate_ringing        # rings in the detections list
+    buttons:                                # buttons on the big picture
       - { label: Open, icon: mdi:gate, entity: script.open_gate }
 ptz:
-  channel: 1               # default: the first PTZ camera
-  presets:                 # default: the camera's named presets
-    - { name: Driveway, icon: mdi:car, preset: 3 }       # a camera preset
-    - { name: Night watch, entity: script.night_watch }   # or your own script
-  linked: [2]              # default: the PTZ's twin lens (see below); [] for none
+  channel: 1
+  presets:
+    - { name: Driveway, icon: mdi:car, preset: 3 }        # a camera preset
+    - { name: Night watch, entity: script.night_watch }    # or your own script
+  linked: [2]       # the PTZ's twin lens; [] to turn the pairing off
 ```
 
-**Saved views** come from the presets you have *named* in the camera's own web
-page. Hikvision PTZs report every slot as in use with a default name, and some
-numbers are commands (94 reboots the camera), so unnamed slots and command
-numbers are never listed.
+**Saved views** come from the presets you have *named* in the camera's own web page. Hikvision PTZs report every slot as in use with a default name, and some numbers are commands (94 reboots the camera), so unnamed slots and command numbers are never listed.
 
-**Twin-lens cameras** (a panoramic lens that steers a PTZ, such as TandemVu)
-appear as two channels and spot people and vehicles on the panoramic lens only,
-so the PTZ's own timeline would stay empty. `ptz.linked` lists the cameras whose
-person / vehicle markers the PTZ shows too. It is filled in for you when exactly
-one other channel has the PTZ's address; set `linked: []` to turn it off.
+**go2rtc:** set `go2rtc_url` and a `stream:` name per camera in `fast_live` (`<name>_main`; tiles use `<name>_sub`).
 
-**go2rtc:** by default live video goes through Home Assistant's own camera
-streaming. If you run go2rtc with one stream per camera, set `go2rtc_url` and a
-`stream:` name per camera in `fast_live` (`<name>_main`; tiles use
-`<name>_sub`) for faster starts.
+## Using it
 
-## Good to know
+- **Swap the big picture:** tap a tile.
+- **Full screen:** tap the big picture. In full screen, swipe left / right for the next camera, pinch or scroll to zoom (double-tap resets), and tap to mute or unmute.
+- **Aim the PTZ:** tap the aim button, then tap the spot in the picture (or draw a box to zoom in to it).
+- **Watch a detection:** tap a dot on the 24-hour bar or a row in the detections list.
+- **Slide things away:** swipe the detections list to the right, or the 24-hour bar down. Swipe back in from the edge, or tap the little handle. On an iPad use the handles: its screen edges belong to iPadOS.
 
-- **Slide things away.** Swipe the detections list to the right, or the
-  24-hour bar down, for a bigger wall. Swipe back in from the edge, or tap the
-  little handle. On an iPad, use the handles: its screen edges belong to iPadOS.
-- **Twin-lens cameras** (a panoramic lens that steers a PTZ) are paired
-  automatically: the PTZ shows the panoramic lens's people and vehicles, and
-  each one gets a ▶ PTZ button to watch the close-up.
-- **Screenshot mode:** add `?blur` to the page address and every camera
-  picture is blurred, so you can share your wall without sharing your house.
-- **History:** day stepper, previous / next event, ±10 s, zoom, and saving a clip.
+## Doorbell photos
+
+Give a doorbell or gate camera a `ring:` sensor and each ring shows in the detections list. To show a photo with it, save one per ring into Home Assistant's media folder as `doorbell/<YYYY-MM-DD>/<camera>_<HHMMSS>.jpg`, where `<camera>` is the camera entity without `camera.`:
+
+```yaml
+automation:
+  - alias: Doorbell - save a photo of each ring
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.doorbell_ringing
+        to: "on"
+    actions:
+      - action: camera.snapshot
+        target:
+          entity_id: camera.front_door
+        data:
+          filename: >-
+            /media/doorbell/{{ now().strftime('%Y-%m-%d') }}/front_door_{{ now().strftime('%H%M%S') }}.jpg
+```
+
+Photos are never deleted unless you ask: with `ring_photo_days: 14`, a wall opened by an admin removes photos older than 14 days, twice a day at most.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| The big picture stays black | The camera's main stream is probably H.265 and the browser can't decode it. Switch that stream to H.264 on the recorder, or use a browser with hardware H.265 (Safari, Edge). |
+| Live video freezes after a few seconds in Firefox | Turn **H.265+ / Smart Codec** off for that stream on the recorder (plain H.265 is fine). |
+| No person / vehicle dots | The recorder needs AcuSense (smart search), and the camera's smart events must be switched on in the recorder. |
+| The PTZ has no dots but you know it saw people | Twin-lens cameras file detections under the panoramic lens. Check `ptz.linked` points at it. |
+| The card doesn't appear after an update | Hard-refresh the browser (Ctrl+Shift+R), or *Settings → Reset frontend cache* in the app. |
+| Replays on iPhone / iPad take a while | 10-20 s to start is normal: that's Home Assistant's streaming route. |
 
 ## Tested on
 
@@ -125,8 +167,6 @@ either way.
   Turn H.265+ off for that camera's stream on the recorder (plain H.265 is fine).
 - **H.265 in desktop Chrome / Firefox** depends on hardware decoding; the
   sub stream in H.264 is the safe choice for tiles.
-- **iPhone / iPad replays** take 10-20 s to start (Home Assistant's HLS route).
-- Live tiles are off on phones unless you set `live_tiles: all`.
 
 ## Building
 
@@ -136,7 +176,9 @@ either way.
 
 ## Support
 
-If this wall makes your cameras nicer to live with, you can [buy me a coffee](https://www.buymeacoffee.com/deekay2153). Thank you!
+If this wall makes your cameras nicer to live with, a coffee keeps it going. Thank you!
+
+<a href="https://www.buymeacoffee.com/deekay2153"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="45"></a>
 
 Found a bug or have an idea? [Open an issue](https://github.com/deekay2153/ultimate-hikvision-nvr-card/issues).
 
