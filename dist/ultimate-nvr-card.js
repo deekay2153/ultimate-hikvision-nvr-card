@@ -4885,6 +4885,8 @@ const customElements = (() => {
  *      (`ptz.linked`, e.g. the Panoramic lens of a twin-lens camera) gets a
  *      PTZ pill: the row opens that camera, the pill opens the PTZ's own
  *      recording of the same moment.
+ *  10. Privacy blur for screenshots: add ?blur to the page address and every
+ *      camera picture and photo is blurred, while the wall itself stays sharp.
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -5099,6 +5101,14 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         }
       }
       @media (max-width: 899px), (max-height: 500px) { .flx-tl-tab { display: none; } }
+      /* 10. ?blur: camera pictures and photos blurred, the wall stays sharp. */
+      :host([flx-blur]) advanced-camera-card,
+      :host([flx-blur]) video,
+      :host([flx-blur]) .tile img,
+      :host([flx-blur]) .fl-ev img,
+      :host([flx-blur]) .fast-strip img { filter: blur(22px) saturate(1.15); }
+      :host([flx-blur]) #stage,
+      :host([flx-blur]) .tile { background-image: none !important; }
       /* 9. PTZ pill on rows from the PTZ's linked cameras. */
       :host([wall]) .fl-ev.flx-has-ptz { position: relative; padding-right: 50px; }
       .flx-ev-ptz {
@@ -6608,6 +6618,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
       ensureSideBar(host);
       ensureTimelineBar(host);
       watchSide(host);
+      host.toggleAttribute("flx-blur", new URLSearchParams(window.location.search).has("blur"));
       applyLayout(host);
       fillScreen(host);
       if (!host._flxFillSettle) {
