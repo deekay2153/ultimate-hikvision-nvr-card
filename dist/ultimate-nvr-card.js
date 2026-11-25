@@ -5449,6 +5449,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         tab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8.6 16.6 13.2 12 8.6 7.4 10 6l6 6-6 6z"/></svg>';
         tab.addEventListener("click", (event) => {
           event.stopPropagation();
+          if (Date.now() - (tab._flxSwipedAt || 0) < 400) return;
           setSide(host, !!host._sideOff);
         });
         // Drag the handle itself: left opens, right closes.
@@ -5535,6 +5536,7 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
         tab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8.6 16.6 13.2 12 8.6 7.4 10 6l6 6-6 6z"/></svg>';
         tab.addEventListener("click", (event) => {
           event.stopPropagation();
+          if (Date.now() - (tab._flxSwipedAt || 0) < 400) return;
           setTimelineBar(host, !!host._tlOff);
         });
         swipe(
@@ -5746,6 +5748,8 @@ customElements.whenDefined("ultimate-nvr-card").then(() => {
           if (W.syncTiles) W.syncTiles(host);
         }
         orderCells(host, layout);
+        host.toggleAttribute("side-off", !!host._sideOff && wideScreen());
+        host.toggleAttribute("tl-off", !!host._tlOff && wideScreen());
         if (stage && stage.classList.contains("fl-full")) return; // leave the wall underneath alone
         const tiles = main
           ? [...main.querySelectorAll(".tile")].filter((el) => getComputedStyle(el).display !== "none").length
