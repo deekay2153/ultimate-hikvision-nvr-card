@@ -1,4 +1,4 @@
-/*! Ultimate Hikvision NVR card 0.1.2
+/*! Ultimate Hikvision NVR card 0.1.3
  * https://github.com/deekay2153/ultimate-hikvision-nvr-card
  * MIT licence. Contains the Hikvision NVR card by techmarkai
  * (https://github.com/techmarkai/hikvision-nvr-ha, MIT) and the Arcane PTZ
@@ -742,7 +742,7 @@ if (!customElements.get('arcane-ptz-joystick')) {
 // Read from our own URL (…/ultimate-nvr-card.js?v=1.2.3) rather than a second
 // hand-maintained constant. A version banner that disagrees with the installed
 // integration is worse than none -- it sends you debugging the wrong build.
-const CARD_VERSION = "0.1.2";
+const CARD_VERSION = "0.1.3";
 
 console.info(
   `%c ULTIMATE-NVR-CARD %c ${CARD_VERSION} `,
