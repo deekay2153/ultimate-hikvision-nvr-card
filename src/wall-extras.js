@@ -35,7 +35,9 @@
  *   9. In the detections list, a row from a camera linked to the PTZ
  *      (`ptz.linked`, e.g. the Panoramic lens of a twin-lens camera) gets a
  *      PTZ pill: the row opens that camera, the pill opens the PTZ's own
- *      recording of the same moment.
+ *      recording of the same moment. So does a doorbell ring from a camera in
+ *      `ptz.ring_follow` (e.g. [3, 4]: an automation turns the PTZ to that
+ *      door and records it when it rings): its pill plays from the ring.
  *  10. Privacy blur for screenshots: add ?blur to the page address and every
  *      camera picture and photo is blurred, while the wall itself stays sharp.
  *  11. Replays in browsers without built-in HLS (Firefox, desktop Chrome):
@@ -779,7 +781,8 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       const ptz = host._config && host._config.ptz;
       if (!ptz || ptz.channel === undefined) return null;
       const linked = (ptz.linked || []).map(Number).filter((ch) => ch !== Number(ptz.channel));
-      return linked.length ? { channel: Number(ptz.channel), linked } : null;
+      const rings = (ptz.ring_follow || []).map(Number);
+      return linked.length || rings.length ? { channel: Number(ptz.channel), linked, rings } : null;
     };
     const decorateSide = (host) => {
       const link = ptzLinked(host);
@@ -787,7 +790,9 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       if (!link || !list) return;
       list.querySelectorAll(".fl-ev[data-key]:not(.flx-has-ptz)").forEach((row) => {
         const [ch, time] = row.dataset.key.split(":").map(Number);
-        if (!link.linked.includes(ch) || !time || row.querySelector(".flx-ev-ptz")) return;
+        const ring = row.classList.contains("flx-ring");
+        const wanted = ring ? link.rings.includes(ch) : link.linked.includes(ch);
+        if (!wanted || !time || row.querySelector(".flx-ev-ptz")) return;
         row.classList.add("flx-has-ptz");
         const pill = document.createElement("span");
         pill.className = "flx-ev-ptz";
@@ -803,7 +808,8 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           list.querySelectorAll(".fl-ev.fl-picked").forEach((b) => b.classList.remove("fl-picked"));
           row.classList.add("fl-picked");
           haptic("light");
-          W.goHistory(host, link.channel, time - 5000);
+          // A ring: the PTZ only starts recording as it turns to the door.
+          W.goHistory(host, link.channel, ring ? time + 1000 : time - 5000);
         };
         pill._flxOpen = open;
         pill.addEventListener("keydown", (event) => {

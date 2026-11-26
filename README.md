@@ -84,7 +84,7 @@ Everything is optional; anything you set wins over what the card works out.
 | `go2rtc_url` | none | Play go2rtc streams instead of Home Assistant's own streaming (faster starts). |
 | `ring_photo_days` | off | Delete doorbell photos older than this many days. See [Doorbell photos](#doorbell-photos). |
 | `fast_live` | found for you | Per camera: `name`, `ring`, `ring_label`, `buttons`, `stream`. |
-| `ptz` | found for you | `channel`, `presets`, `linked`, `joystick`. |
+| `ptz` | found for you | `channel`, `presets`, `linked`, `ring_follow`, `joystick`. |
 
 A fuller example:
 
@@ -137,6 +137,8 @@ automation:
           filename: >-
             /media/doorbell/{{ now().strftime('%Y-%m-%d') }}/front_door_{{ now().strftime('%H%M%S') }}.jpg
 ```
+
+**PTZ to the door:** Hikvision intercoms can no longer record themselves. If you have an automation that turns the PTZ to the door and records it when it rings, list those cameras in `ptz.ring_follow` (e.g. `[3, 4]`) and each ring gets a ▶ PTZ button that plays that recording from the ring.
 
 Photos are never deleted unless you ask: with `ring_photo_days: 14`, a wall opened by an admin removes photos older than 14 days, twice a day at most.
 
