@@ -82,6 +82,7 @@ Everything is optional; anything you set wins over what the card works out.
 | `live_tiles` | `true` | Live video on the small tiles. Off on phones unless `all`. |
 | `show_offline` | `false` | Show recorder slots with no camera. |
 | `go2rtc_url` | none | Play go2rtc streams instead of Home Assistant's own streaming (faster starts). |
+| `apple_fast_replays` | `false` | iPhone / iPad (iOS 17.1+): play replays from the recorder's fast download, starting in about a second instead of 10-20 s. See [Replays](#replays). |
 | `ring_photo_days` | off | Delete doorbell photos older than this many days. See [Doorbell photos](#doorbell-photos). |
 | `fast_live` | found for you | Per camera: `name`, `ring`, `ring_label`, `buttons`, `stream`. |
 | `ptz` | found for you | `channel`, `presets`, `linked`, `ring_follow`, `joystick`. |
@@ -151,7 +152,26 @@ Photos are never deleted unless you ask: with `ring_photo_days: 14`, a wall open
 | No person / vehicle dots | The recorder needs AcuSense (smart search), and the camera's smart events must be switched on in the recorder. |
 | The PTZ has no dots but you know it saw people | Twin-lens cameras file detections under the panoramic lens. Check `ptz.linked` points at it. |
 | The card doesn't appear after an update | Hard-refresh the browser (Ctrl+Shift+R), or *Settings → Reset frontend cache* in the app. |
-| Replays on iPhone / iPad take a while | 10-20 s to start is normal: that's Home Assistant's streaming route. |
+| Replays on iPhone / iPad take a while | Turn on `apple_fast_replays: true`. Without it, 10-20 s to start is normal: that's Home Assistant's streaming route. |
+| A detection says "No recording of this one" | The recorder saved no video for that moment (check the camera's recording schedule / event triggers on the recorder). "Not on the recorder yet" means it's under 3 minutes old: try again shortly. |
+
+## Replays
+
+Replays come from the recorder's fast download (the same footage the Save
+button gets), so they start in about a second and play smoothly even on
+cameras with a 2-second keyframe gap.
+
+- **PC (Chrome, Edge, Firefox):** always on.
+- **iPhone / iPad:** add `apple_fast_replays: true`. The page fetches the
+  download itself and feeds it to Safari's player (ManagedMediaSource, iOS
+  17.1+); older iOS keeps the old route. AirPlay is off for replays on this
+  route. Replays on Apple devices then carry sound too.
+- **Android:** stays on Home Assistant's streaming route for now (not yet
+  tested on the fast one).
+- If the fast route fails for a moment, the card carries on from the same
+  second on the old route by itself.
+
+Tapping a detection on a phone scrolls the page back up to the picture.
 
 ## Tested on
 
