@@ -1887,6 +1887,12 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     // (the card's Save link) arrives about 25x faster. Browsers that play HLS
     // themselves (iPhone, iPad) keep their own route.
     const NATIVE_HLS = !!document.createElement("video").canPlayType("application/vnd.apple.mpegurl");
+    // Desktop Chrome / Edge now report native HLS too (Chrome 156: "maybe"),
+    // but play the download as a plain <video src> like Firefox does. Apple
+    // means Safari and every iOS browser / web view. Android also reports HLS
+    // and stays on its old route until the fast one is tested there.
+    const APPLE = NATIVE_HLS && navigator.vendor === "Apple Computer, Inc.";
+    const PLAIN_FAST = !NATIVE_HLS || (!APPLE && !/Android/.test(navigator.userAgent));
     // iPhone / iPad: Safari will not play the download as a plain <video src>
     // (no byte ranges, H.265 labelled hev1), but it plays the same fragmented
     // MP4 through ManagedMediaSource (iOS 17.1+) once the label says hvc1.
@@ -1895,7 +1901,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     const mmsClass = () =>
       window.ManagedMediaSource || (window.__flxMmsTest ? window.MediaSource : null);
     const appleFast = (host) =>
-      !!(NATIVE_HLS || window.__flxMmsTest) &&
+      !!(APPLE || window.__flxMmsTest) &&
       !!mmsClass() &&
       !!(window.__flxMmsTest || (host._config && host._config.apple_fast_replays));
     const MMS_URLS = new Map(); // blob URL -> its feed, until a <video> takes it
@@ -2156,7 +2162,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
           this._flxMmsNext = null;
           if (this._flxPaceNext && url && /\/clip\//.test(url)) {
             this._flxPaceNext = false; // this one clip on the paced stream (see the fallback)
-          } else if ((!NATIVE_HLS || appleFast(this)) && url && fast && fast !== url && /\/clip\//.test(url)) {
+          } else if ((PLAIN_FAST || appleFast(this)) && url && fast && fast !== url && /\/clip\//.test(url)) {
             this._flxFastFor = { clip: url, fast };
             this._playbackUrl = fast;
             // The card's <video src> for this one goes through mmsPlay (see _absolute).
@@ -2198,6 +2204,29 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
             video.addEventListener("ended", () => {
               if (length && video.currentTime < length - 3) fallBack();
             });
+            // Plain fast route (Firefox, desktop Chrome / Edge): fast-live holds
+            // the picture until 3 s are buffered, a cushion for the real-time
+            // stream. Chrome only ever reports ~2.5 s ahead for a plain MP4, so
+            // the hold sat out its full 12 s there. The download arrives far
+            // faster than real time and needs no cushion: a pause that is not
+            // the viewer's own tap is undone at once.
+            if (!String(video.src).startsWith("blob:")) {
+              if (!stage._flxTouchWatch) {
+                stage._flxTouchWatch = true; // once per stage, not per clip
+                const mark = () => (stage._flxTouched = Date.now());
+                stage.addEventListener("pointerdown", mark, true);
+                stage.addEventListener("pointerup", mark, true); // a long press counts too
+              }
+              const touched = () => Date.now() - (stage._flxTouched || 0) < 1000;
+              video.addEventListener("pause", () => {
+                if (done || video.ended || touched()) return;
+                setTimeout(() => {
+                  if (video.paused && !video.ended && video.isConnected && video.readyState >= 3 && !touched()) {
+                    video.play().catch(() => {});
+                  }
+                }, 50);
+              });
+            }
             // iPhone route only: Safari may drop buffered video, even ahead of
             // the picture, and a one-way feed never refills it. Picture stuck
             // for 8 s (not paused) with video waiting beyond it = carry on
