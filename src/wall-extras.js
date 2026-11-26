@@ -47,6 +47,8 @@
  *      17.1+) the same, behind the card option `apple_fast_replays: true`: the
  *      page fetches the download itself and feeds it to Safari's
  *      ManagedMediaSource, relabelling H.265 from hev1 to hvc1 on the way.
+ *  12. Tapping a detection scrolls the page back up to the picture when it
+ *      is out of view (phones, where the list sits under the video).
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -1880,6 +1882,58 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
       stage.dataset.url = "";
       host._renderLive(stage);
     };
+    // ---- 12. a detection tap brings the picture into view --------------------------------
+    // On a phone the detections list sits below the video: after a tap the
+    // replay starts out of sight. Scroll it back up, but only when it is out of
+    // view, so the PC wall (everything on one screen) never moves.
+    let safeTop = null; // the notch / status bar inset, measured once
+    const topInset = (host) => {
+      if (safeTop === null) {
+        try {
+          const probe = document.createElement("div");
+          probe.style.cssText = "position:fixed;top:0;padding-top:env(safe-area-inset-top);visibility:hidden";
+          document.body.appendChild(probe);
+          safeTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+          probe.remove();
+        } catch (_) {
+          safeTop = 0;
+        }
+      }
+      const header = parseFloat(getComputedStyle(host).getPropertyValue("--header-height")) || 56;
+      return header + safeTop;
+    };
+    if (!window.__flxTapScroll) {
+      window.__flxTapScroll = true;
+      document.addEventListener(
+        "click",
+        (event) => {
+          try {
+            const path = event.composedPath ? event.composedPath() : [];
+            const row = path.find((el) => el.classList && el.classList.contains("fl-ev"));
+            const host = row && path.find((el) => el.tagName && /-nvr-card$/i.test(el.tagName));
+            if (!row || !host || !host.shadowRoot) return;
+            // After the card has redrawn (Live -> History changes the bars' height).
+            setTimeout(() => {
+              // The tail of a swipe on the list is not a tap.
+              if (event.defaultPrevented) return;
+              const stage = host.shadowRoot.querySelector("#stage");
+              if (!stage || !stage.isConnected) return;
+              const box = stage.getBoundingClientRect();
+              const top = topInset(host);
+              const shown = Math.max(0, Math.min(box.bottom, window.innerHeight) - Math.max(box.top, top));
+              // Mostly in view already (the PC wall, a phone at the top): leave it.
+              if (box.height && shown >= box.height * 0.75 && box.top >= top - 24) return;
+              stage.style.scrollMarginTop = `${top + 8}px`;
+              const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+              stage.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
+            }, 150);
+          } catch (_) {
+            /* no scroll */
+          }
+        },
+        true
+      );
+    }
     // ---- 11. replays from the fast download ------------------------------------------
     // The recorder's playback stream comes at real time, a keyframe gap at a
     // time (measured: 1.1 MB every 2 s on a 2 s-GOP camera), so the player runs
