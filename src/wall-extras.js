@@ -43,7 +43,10 @@
  *  11. Replays in browsers without built-in HLS (Firefox, desktop Chrome):
  *      played from the recorder's fast download instead of its real-time
  *      playback stream, so the video stays well ahead instead of arriving one
- *      keyframe-gap (often 2 s) at a time and skipping.
+ *      keyframe-gap (often 2 s) at a time and skipping. On iPhone / iPad (iOS
+ *      17.1+) the same, behind the card option `apple_fast_replays: true`: the
+ *      page fetches the download itself and feeds it to Safari's
+ *      ManagedMediaSource, relabelling H.265 from hev1 to hvc1 on the way.
  *
  * Deployed as an inline dashboard resource; this file is the source of truth.
  */
@@ -1884,17 +1887,280 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
     // (the card's Save link) arrives about 25x faster. Browsers that play HLS
     // themselves (iPhone, iPad) keep their own route.
     const NATIVE_HLS = !!document.createElement("video").canPlayType("application/vnd.apple.mpegurl");
+    // iPhone / iPad: Safari will not play the download as a plain <video src>
+    // (no byte ranges, H.265 labelled hev1), but it plays the same fragmented
+    // MP4 through ManagedMediaSource (iOS 17.1+) once the label says hvc1.
+    // `window.__flxMmsTest` runs this path on a desktop browser, for testing
+    // (deliberately kept in the release build; nothing sets it by itself).
+    const mmsClass = () =>
+      window.ManagedMediaSource || (window.__flxMmsTest ? window.MediaSource : null);
+    const appleFast = (host) =>
+      !!(NATIVE_HLS || window.__flxMmsTest) &&
+      !!mmsClass() &&
+      !!(window.__flxMmsTest || (host._config && host._config.apple_fast_replays));
+    const MMS_URLS = new Map(); // blob URL -> its feed, until a <video> takes it
+    // Installed on the first fast replay only, so other browsers keep an
+    // untouched HTMLMediaElement. Catches `video.src =` (what the card uses),
+    // not setAttribute.
+    const hookSrc = () => {
+      const srcProp = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "src");
+      if (srcProp && srcProp.set && !HTMLMediaElement.prototype.__flxMmsSrc) {
+        Object.defineProperty(HTMLMediaElement.prototype, "src", {
+          configurable: true,
+          enumerable: srcProp.enumerable,
+          get: srcProp.get,
+          set(value) {
+            const feed = MMS_URLS.get(value);
+            if (feed) {
+              MMS_URLS.delete(value);
+              feed.video = this;
+              // ManagedMediaSource only opens when AirPlay is off for the element.
+              this.disableRemotePlayback = true;
+            }
+            srcProp.set.call(this, value);
+          },
+        });
+        HTMLMediaElement.prototype.__flxMmsSrc = true;
+      }
+    };
+    // The codec string, read from the MP4's moov (H.265 or H.264, plus AAC).
+    // H.265 is relabelled hev1 -> hvc1 in place: its parameter sets are in
+    // hvcC (3 arrays on every camera here), which is what Apple wants it to say.
+    const codecOf = (moov) => {
+      const find = (tag) => {
+        const t = [...tag].map((c) => c.charCodeAt(0));
+        for (let i = 0; i + 4 <= moov.length; i++) {
+          if (moov[i] === t[0] && moov[i + 1] === t[1] && moov[i + 2] === t[2] && moov[i + 3] === t[3]) return i;
+        }
+        return -1;
+      };
+      const hex = (n) => n.toString(16).toUpperCase();
+      let video = null;
+      const hvcc = find("hvcC");
+      if (hvcc >= 0) {
+        const p = hvcc + 4;
+        const b1 = moov[p + 1];
+        let compat = ((moov[p + 2] << 24) | (moov[p + 3] << 16) | (moov[p + 4] << 8) | moov[p + 5]) >>> 0;
+        let reversed = 0;
+        for (let i = 0; i < 32; i++) {
+          reversed = ((reversed << 1) | (compat & 1)) >>> 0;
+          compat >>>= 1;
+        }
+        const constraints = [];
+        for (let i = 0; i < 6; i++) constraints.push(moov[p + 6 + i]);
+        while (constraints.length && !constraints[constraints.length - 1]) constraints.pop();
+        video =
+          `hvc1.${["", "A", "B", "C"][b1 >> 6]}${b1 & 31}.${hex(reversed)}.` +
+          `${b1 & 32 ? "H" : "L"}${moov[p + 12]}` +
+          constraints.map((c) => "." + hex(c)).join("");
+        const hev1 = find("hev1");
+        if (hev1 >= 0) moov.set([0x68, 0x76, 0x63, 0x31], hev1);
+      } else {
+        const avcc = find("avcC");
+        if (avcc < 0) return null;
+        const p = avcc + 4;
+        video = "avc1." + [1, 2, 3].map((k) => moov[p + k].toString(16).padStart(2, "0")).join("");
+      }
+      return find("mp4a") >= 0 ? `${video},mp4a.40.2` : video;
+    };
+    // Feed one download into a (Managed)MediaSource; returns the blob URL for
+    // the <video>. Reading pauses whenever Safari says it has enough
+    // (endstreaming) or the buffer is full, and stops when the video lets go.
+    const mmsPlay = (url) => {
+      hookSrc();
+      const Source = mmsClass();
+      const ms = new Source();
+      const blob = URL.createObjectURL(ms);
+      const feed = { video: null };
+      MMS_URLS.set(blob, feed);
+      const abort = new AbortController();
+      // Liveness: a video that never took this source, or that has left the
+      // page (wiped by the next clip without letting go), ends the download.
+      const born = Date.now();
+      let away = 0;
+      const alive = setInterval(() => {
+        const video = feed.video;
+        if (abort.signal.aborted) away = 99;
+        else if (!video) away = Date.now() - born > 30000 ? 99 : 0;
+        else away = video.isConnected ? 0 : away + 1;
+        if (away >= 3) {
+          clearInterval(alive);
+          MMS_URLS.delete(blob);
+          abort.abort();
+          nudge();
+        }
+      }, 1000);
+      let streaming = true;
+      let wake = null;
+      const nudge = () => {
+        const w = wake;
+        wake = null;
+        if (w) w();
+      };
+      const rest = (ms_) =>
+        new Promise((resolve) => {
+          wake = resolve;
+          setTimeout(nudge, ms_);
+        });
+      ms.addEventListener("startstreaming", () => {
+        streaming = true;
+        nudge();
+      });
+      ms.addEventListener("endstreaming", () => {
+        streaming = false;
+      });
+      ms.addEventListener("sourceclose", () => {
+        abort.abort();
+        nudge();
+      });
+      const run = async () => {
+        const res = await fetch(url, { signal: abort.signal, cache: "no-store" });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        abort.signal.addEventListener("abort", () => reader.cancel().catch(() => {}));
+        let head = new Uint8Array(0);
+        let buffer = null;
+        const once = (data) =>
+          new Promise((resolve, reject) => {
+            const done = () => {
+              buffer.removeEventListener("updateend", done);
+              buffer.removeEventListener("error", failed);
+              resolve();
+            };
+            const failed = () => {
+              buffer.removeEventListener("updateend", done);
+              buffer.removeEventListener("error", failed);
+              reject(new Error("append failed"));
+            };
+            buffer.addEventListener("updateend", done);
+            buffer.addEventListener("error", failed);
+            buffer.appendBuffer(data);
+          });
+        const append = async (data) => {
+          for (let tries = 0; ; ) {
+            while (!streaming && !abort.signal.aborted) await rest(1000);
+            if (abort.signal.aborted || ms.readyState !== "open") throw new Error("closed");
+            try {
+              await once(data);
+              return;
+            } catch (err) {
+              if (!err || err.name !== "QuotaExceededError" || tries > 30) throw err;
+              // Full: drop what is well behind the picture, then wait a moment.
+              // Waiting while the viewer has paused does not count as a try.
+              const video = feed.video;
+              if (!(video && video.paused)) tries++;
+              const keepFrom = video ? video.currentTime - 10 : 0;
+              if (keepFrom > 1 && !buffer.updating) {
+                await new Promise((resolve) => {
+                  buffer.addEventListener("updateend", resolve, { once: true });
+                  buffer.remove(0, keepFrom);
+                });
+              }
+              await rest(1000);
+            }
+          }
+        };
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (buffer) {
+            await append(value);
+            continue;
+          }
+          const joined = new Uint8Array(head.length + value.length);
+          joined.set(head);
+          joined.set(value, head.length);
+          head = joined;
+          // Wait for the whole moov: it names the codecs.
+          let at = 0;
+          let moovAt = -1;
+          let moovEnd = -1;
+          while (at + 8 <= head.length) {
+            const view = new DataView(head.buffer, head.byteOffset + at);
+            let size = view.getUint32(0);
+            const type = String.fromCharCode(head[at + 4], head[at + 5], head[at + 6], head[at + 7]);
+            if (size === 1 && at + 16 <= head.length) size = Number(view.getBigUint64(8));
+            if (size < 8) break;
+            if (type === "moov") {
+              moovAt = at;
+              if (at + size <= head.length) moovEnd = at + size;
+              break;
+            }
+            at += size;
+          }
+          if (moovEnd < 0) {
+            if (head.length > 4 << 20) throw new Error("no moov in the first 4 MB");
+            continue;
+          }
+          const codecs = codecOf(head.subarray(moovAt, moovEnd));
+          const type = `video/mp4; codecs="${codecs}"`;
+          if (!codecs || !Source.isTypeSupported(type)) throw new Error(`not playable here: ${type}`);
+          buffer = ms.addSourceBuffer(type);
+          await append(head);
+          // The first fragment may not start at 0: start the picture where it does.
+          const video = feed.video;
+          if (video && buffer.buffered.length && video.currentTime < buffer.buffered.start(0)) {
+            video.currentTime = buffer.buffered.start(0);
+          }
+        }
+        if (!buffer) throw new Error("download ended before any video");
+        while (buffer.updating) await new Promise((r) => buffer.addEventListener("updateend", r, { once: true }));
+        if (ms.readyState === "open") ms.endOfStream();
+      };
+      ms.addEventListener(
+        "sourceopen",
+        () => {
+          URL.revokeObjectURL(blob); // attached: the URL is no longer needed
+          run().catch((err) => {
+            if (abort.signal.aborted) return;
+            console.warn("nvr wall-extras: iPhone fast replay failed, using the old route", err);
+            abort.abort();
+            // An error on the element sends the card back to the paced stream.
+            const video = feed.video;
+            if (video) {
+              try {
+                video.dispatchEvent(new Event("error"));
+              } catch (_) {
+                /* gone */
+              }
+            }
+          });
+        },
+        { once: true }
+      );
+      return blob;
+    };
+    const absolute = proto._absolute;
+    if (absolute) {
+      proto._absolute = function (url, ...more) {
+        const out = absolute.call(this, url, ...more);
+        // Only the exact fast URL picked for the clip now showing: a late
+        // render of the clip before it (quick flicking) gets a plain URL and
+        // is wiped anyway. The Save link does not come through here.
+        if (this._flxMmsNext && typeof url === "string" && url.split("?")[0] === this._flxMmsNext) {
+          try {
+            return mmsPlay(out);
+          } catch (err) {
+            console.warn("nvr wall-extras: iPhone fast replay unavailable", err);
+          }
+        }
+        return out;
+      };
+    }
     const pacedPlayback = proto._renderPlayback;
     if (pacedPlayback) {
       proto._renderPlayback = function (stage, ...rest) {
         try {
           const url = this._playbackUrl;
           const fast = this._downloadUrl;
+          this._flxMmsNext = null;
           if (this._flxPaceNext && url && /\/clip\//.test(url)) {
             this._flxPaceNext = false; // this one clip on the paced stream (see the fallback)
-          } else if (!NATIVE_HLS && url && fast && fast !== url && /\/clip\//.test(url)) {
+          } else if ((!NATIVE_HLS || appleFast(this)) && url && fast && fast !== url && /\/clip\//.test(url)) {
             this._flxFastFor = { clip: url, fast };
             this._playbackUrl = fast;
+            // The card's <video src> for this one goes through mmsPlay (see _absolute).
+            if (appleFast(this)) this._flxMmsNext = fast;
           }
         } catch (_) {
           /* keep the paced stream */
@@ -1932,6 +2198,27 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
             video.addEventListener("ended", () => {
               if (length && video.currentTime < length - 3) fallBack();
             });
+            // iPhone route only: Safari may drop buffered video, even ahead of
+            // the picture, and a one-way feed never refills it. Picture stuck
+            // for 8 s (not paused) with video waiting beyond it = carry on
+            // from the same moment on the paced stream.
+            if (String(video.src).startsWith("blob:")) {
+              let last = -1;
+              let still = 0;
+              const watch = setInterval(() => {
+                if (done || !video.isConnected) return clearInterval(watch);
+                const now = video.currentTime;
+                const b = video.buffered;
+                const ahead = b.length && b.end(b.length - 1) > now + 1;
+                if (video.paused || video.ended || now !== last || !ahead || video.readyState < 1) {
+                  still = 0;
+                } else if (++still >= 4) {
+                  clearInterval(watch);
+                  fallBack();
+                }
+                last = now;
+              }, 2000);
+            }
           })
           .catch(() => {});
         return result;
