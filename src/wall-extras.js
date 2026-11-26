@@ -1912,6 +1912,9 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
             const row = path.find((el) => el.classList && el.classList.contains("fl-ev"));
             const host = row && path.find((el) => el.tagName && /-nvr-card$/i.test(el.tagName));
             if (!row || !host || !host.shadowRoot) return;
+            // See the no-recording check below: which moment this tap asked for.
+            const tapped = Number(String(row.dataset.key || "").split(":")[1]);
+            host._flxRowTap = Number.isFinite(tapped) ? { at: Date.now(), time: tapped } : null;
             // After the card has redrawn (Live -> History changes the bars' height).
             setTimeout(() => {
               // The tail of a swipe on the list is not a tap.
@@ -1933,6 +1936,60 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         },
         true
       );
+    }
+    // A detection with no recording behind it (the recorder saved nothing for
+    // it, or not yet): the card used to stop silently on "Pick a moment", or
+    // jump to whatever was recorded next, hours later. Say so instead. Only
+    // for taps on a detection; timeline taps keep jumping to the next block.
+    const basePlayFrom = proto._playFrom;
+    if (basePlayFrom) {
+      // The detection must be inside a block that runs a few seconds past it,
+      // or in one starting within a minute (blocks under 2 min apart are
+      // already merged by the timeline's gap=120).
+      const covered = (blocks, t) => {
+        const inside = blocks.find((b) => t >= b.start && t + 5000 <= b.end);
+        const next = blocks.find((b) => b.end > t + 5000);
+        return !!inside || (!!next && next.start - t <= 60000);
+      };
+      proto._playFrom = async function (when, ...rest) {
+        try {
+          const t = new Date(when).getTime();
+          const tap = this._flxRowTap;
+          // Only the play a detection tap asked for (its moment, give or take
+          // 10 s: rows play from 5 s before, ring PTZ pills 1 s after).
+          if (tap && Date.now() - tap.at < 15000 && Math.abs(t - tap.time) <= 10000) {
+            this._flxRowTap = null;
+            if (this._error === this._flxNoRec) this._error = null;
+            if (!covered(this._blocks || [], t) && this._loadTimeline) {
+              // The list may be from earlier (same camera, same day): fetch it
+              // again once, keeping the timeline's zoom.
+              const view = this._view;
+              await this._loadTimeline();
+              if (view && !this._error) this._view = view;
+            }
+            if (!covered(this._blocks || [], t)) {
+              this._playbackUrl = null;
+              this._downloadUrl = null;
+              this._cursor = null;
+              this._flPlayAt = null;
+              // A failed reload keeps its own message ("Timeline failed: ...").
+              if (!this._error) {
+                const fresh = Date.now() - t < 3 * 60000;
+                this._error = fresh
+                  ? "Not on the recorder yet: try again in a minute"
+                  : `No recording of this one: the recorder saved nothing around ${clock(t + 5000).slice(0, 5)}`;
+                this._flxNoRec = this._error;
+              }
+              this._render();
+              return;
+            }
+          }
+        } catch (_) {
+          /* play as before */
+        }
+        if (this._flxNoRec && this._error === this._flxNoRec) this._error = null;
+        return basePlayFrom.call(this, when, ...rest);
+      };
     }
     // ---- 11. replays from the fast download ------------------------------------------
     // The recorder's playback stream comes at real time, a keyframe gap at a
