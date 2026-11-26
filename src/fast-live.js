@@ -2099,7 +2099,7 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
         }
       }, 200);
     };
-    if (!/m3u8/i.test(video.currentSrc || video.src || "")) {
+    if (!/m3u8|\/save\//i.test(video.currentSrc || video.src || "")) { // fast download: no cushion
       video.addEventListener("playing", hold, { once: true });
       video.addEventListener("waiting", hold);
     }

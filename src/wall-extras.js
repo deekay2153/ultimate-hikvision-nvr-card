@@ -2204,29 +2204,6 @@ customElements.whenDefined("hikvision-nvr-card").then(() => {
             video.addEventListener("ended", () => {
               if (length && video.currentTime < length - 3) fallBack();
             });
-            // Plain fast route (Firefox, desktop Chrome / Edge): fast-live holds
-            // the picture until 3 s are buffered, a cushion for the real-time
-            // stream. Chrome only ever reports ~2.5 s ahead for a plain MP4, so
-            // the hold sat out its full 12 s there. The download arrives far
-            // faster than real time and needs no cushion: a pause that is not
-            // the viewer's own tap is undone at once.
-            if (!String(video.src).startsWith("blob:")) {
-              if (!stage._flxTouchWatch) {
-                stage._flxTouchWatch = true; // once per stage, not per clip
-                const mark = () => (stage._flxTouched = Date.now());
-                stage.addEventListener("pointerdown", mark, true);
-                stage.addEventListener("pointerup", mark, true); // a long press counts too
-              }
-              const touched = () => Date.now() - (stage._flxTouched || 0) < 1000;
-              video.addEventListener("pause", () => {
-                if (done || video.ended || touched()) return;
-                setTimeout(() => {
-                  if (video.paused && !video.ended && video.isConnected && video.readyState >= 3 && !touched()) {
-                    video.play().catch(() => {});
-                  }
-                }, 50);
-              });
-            }
             // iPhone route only: Safari may drop buffered video, even ahead of
             // the picture, and a one-way feed never refills it. Picture stuck
             // for 8 s (not paused) with video waiting beyond it = carry on
